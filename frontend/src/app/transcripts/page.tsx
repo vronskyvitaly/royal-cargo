@@ -14,10 +14,17 @@ const RESULT_COLORS: Record<string, string> = {
 export default function TranscriptsPage() {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [generating, setGenerating] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.transcripts.list().then(setTranscripts);
+    api.transcripts
+      .list()
+      .then(setTranscripts)
+      .catch((e: unknown) =>
+        setError(`Не удалось загрузить звонки: ${String(e)}`)
+      )
+      .finally(() => setLoading(false));
     const socket = getSocket();
     socket.on("article:created", (article: Article) => {
       setTranscripts((prev) =>
@@ -58,6 +65,7 @@ export default function TranscriptsPage() {
               <th className="px-4 py-3 text-left">Менеджер</th>
               <th className="px-4 py-3 text-center">Итог</th>
               <th className="px-4 py-3 text-right">Транскрипт</th>
+              <th className="px-4 py-3 text-center">Расшифровка</th>
               <th className="px-4 py-3 text-center">Статья</th>
             </tr>
           </thead>
@@ -87,6 +95,18 @@ export default function TranscriptsPage() {
                     : "—"}
                 </td>
                 <td className="px-4 py-3 text-center">
+                  {t.transcript_len && t.transcript_len > 0 ? (
+                    <Link
+                      href={`/transcripts/${t.id}`}
+                      className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                    >
+                      Читать
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-center">
                   {t.has_article ? (
                     <Link
                       href="/articles"
@@ -110,8 +130,11 @@ export default function TranscriptsPage() {
             ))}
           </tbody>
         </table>
-        {transcripts.length === 0 && (
+        {loading && (
           <p className="p-8 text-center text-gray-400">Загрузка…</p>
+        )}
+        {!loading && transcripts.length === 0 && !error && (
+          <p className="p-8 text-center text-gray-400">Нет звонков</p>
         )}
       </div>
     </div>

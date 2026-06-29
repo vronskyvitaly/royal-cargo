@@ -184,7 +184,15 @@ export default function ArticleEditorPage({
           Предпросмотр HTML
         </summary>
         <div
-          className="mt-3 rounded-xl border border-gray-200 bg-white p-6 prose prose-sm max-w-none"
+          className="mt-3 rounded-xl border border-gray-200 bg-white p-6 text-gray-800
+            [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mb-4 [&_h1]:text-gray-900
+            [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-6 [&_h2]:mb-3 [&_h2]:text-gray-900
+            [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-gray-800
+            [&_p]:mb-4 [&_p]:leading-relaxed
+            [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:mb-4
+            [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:mb-4
+            [&_li]:mb-1
+            [&_strong]:font-semibold [&_strong]:text-gray-900"
           dangerouslySetInnerHTML={{ __html: content }}
         />
       </details>
@@ -203,7 +211,7 @@ export default function ArticleEditorPage({
               value={reviewerName}
               onChange={(e) => setReviewerName(e.target.value)}
               placeholder="Например: Александр Березнев"
-              className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+              className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-blue-400 focus:outline-none"
             />
           </div>
 
@@ -223,7 +231,7 @@ export default function ArticleEditorPage({
                   onChange={(e) => setRejectComment(e.target.value)}
                   placeholder="Причина отклонения (необязательно)"
                   rows={2}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-red-300 focus:outline-none resize-none"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-red-300 focus:outline-none resize-none"
                 />
                 <button
                   onClick={() => setStatus("rejected")}
