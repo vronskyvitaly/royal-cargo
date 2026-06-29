@@ -1,12 +1,20 @@
 # Claude
 .claude
 
+# Local agent
+local/*
+local
+
 # Dependencies
 node_modules
 
 # Next.js
 frontend/.next
 frontend/out
+frontend/.env
+
+# Express.js
+server/.env
 
 # Build
 server/dist
