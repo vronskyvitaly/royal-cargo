@@ -1,0 +1,24 @@
+# Claude
+.claude
+
+# Dependencies
+node_modules
+
+# Next.js
+frontend/.next
+frontend/out
+
+# Build
+server/dist
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
