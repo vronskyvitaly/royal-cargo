@@ -1,6 +1,6 @@
 import { getToken } from "./auth";
 
-const BASE = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:4000";
+const BASE = "";
 
 function authHeaders(): HeadersInit {
   const token = getToken();
