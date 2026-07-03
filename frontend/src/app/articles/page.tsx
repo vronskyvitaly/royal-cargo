@@ -7,9 +7,11 @@ import StatusBadge from "@/components/StatusBadge";
 
 export default function ArticlesPage() {
   const [articles, setArticles] = useState<Article[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.articles.list().then(setArticles);
+    api.articles.list().then(setArticles).finally(() => setLoading(false));
+
     const socket = getSocket();
 
     const upsert = (article: Article) =>
@@ -59,12 +61,24 @@ export default function ArticlesPage() {
                   <div className="line-clamp-1 text-xs">{a.transcript_subject ?? "—"}</div>
                   {a.call_date && (
                     <div className="text-xs text-gray-400">
-                      {new Date(a.call_date).toLocaleDateString("ru-RU")}
+                      {new Date(a.call_date).toLocaleDateString("ru-RU", { timeZone: "Europe/Moscow" })}
                     </div>
                   )}
                 </td>
                 <td className="px-4 py-3 text-center">
-                  <StatusBadge status={a.status} />
+                  <div className="flex flex-col items-center gap-1">
+                    <StatusBadge status={a.status} />
+                    {a.reviewed_by && (a.status === "approved" || a.status === "published") && (
+                      <span className="text-xs text-green-600">
+                        ✓ {a.reviewed_by}
+                      </span>
+                    )}
+                    {a.reviewed_by && a.status === "rejected" && (
+                      <span className="text-xs text-red-500">
+                        ✕ {a.reviewed_by}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-gray-500 capitalize">
                   {a.platform ?? "—"}
@@ -83,6 +97,7 @@ export default function ArticlesPage() {
                   {new Date(a.updated_at).toLocaleString("ru-RU", {
                     day: "2-digit", month: "2-digit",
                     hour: "2-digit", minute: "2-digit",
+                    timeZone: "Europe/Moscow",
                   })}
                 </td>
                 <td className="px-4 py-3 text-right">
@@ -97,7 +112,16 @@ export default function ArticlesPage() {
             ))}
           </tbody>
         </table>
-        {articles.length === 0 && (
+        {loading && (
+          <div className="flex items-center justify-center gap-2 py-10 text-gray-400">
+            <svg className="animate-spin shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.2"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            </svg>
+            <span className="text-sm">Загрузка…</span>
+          </div>
+        )}
+        {!loading && articles.length === 0 && (
           <p className="p-8 text-center text-gray-400">
             Нет статей. Создайте первую на странице Звонки.
           </p>

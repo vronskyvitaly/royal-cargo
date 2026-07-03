@@ -70,7 +70,7 @@ export default function TranscriptPage({
         <div>
           <span className="text-gray-400 text-xs uppercase">Дата</span>
           <p className="font-medium text-gray-800 mt-0.5">
-            {new Date(transcript.call_date).toLocaleString("ru-RU")}
+            {new Date(transcript.call_date).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })}
           </p>
         </div>
         <div>

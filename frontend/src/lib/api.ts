@@ -1,4 +1,35 @@
+import { getToken } from "./auth";
+
 const BASE = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:4000";
+
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function get(path: string) {
+  return fetch(`${BASE}${path}`, { headers: authHeaders() }).then((r) => r.json());
+}
+
+function post(path: string, body: unknown) {
+  return fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+}
+
+function put(path: string, body: unknown) {
+  return fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+}
+
+function del(path: string) {
+  return fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders() });
+}
 
 export interface Transcript {
   id: number;
@@ -25,31 +56,62 @@ export interface Article {
   published_url: string | null;
   review_comment: string | null;
   reviewed_by: string | null;
+  last_edited_by: string | null;
   created_at: string;
   updated_at: string;
   transcript_subject?: string;
   call_date?: string;
   manager_name?: string;
+  history?: { id: number; user_name: string; action: string; created_at: string }[];
+}
+
+export interface ArticleComment {
+  id: number;
+  article_id: number;
+  user_name: string;
+  selected_text: string;
+  comment_text: string;
+  resolved: boolean;
+  created_at: string;
+}
+
+export interface TranscriptFilters {
+  page?: number;
+  limit?: number;
+  search?: string;
+  result?: string;
+  has_article?: "yes" | "no" | "all";
+  manager?: string;
+}
+
+export interface TranscriptsPage {
+  rows: Transcript[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export const api = {
   transcripts: {
-    list: (): Promise<Transcript[]> =>
-      fetch(`${BASE}/api/transcripts`).then((r) => r.json()),
-    get: (id: number): Promise<Transcript> =>
-      fetch(`${BASE}/api/transcripts/${id}`).then((r) => r.json()),
+    list: (filters?: TranscriptFilters): Promise<TranscriptsPage> => {
+      const params = new URLSearchParams();
+      if (filters?.page) params.set("page", String(filters.page));
+      if (filters?.limit) params.set("limit", String(filters.limit));
+      if (filters?.search) params.set("search", filters.search);
+      if (filters?.result) params.set("result", filters.result);
+      if (filters?.has_article) params.set("has_article", filters.has_article);
+      if (filters?.manager) params.set("manager", filters.manager);
+      const qs = params.toString();
+      return get(`/api/transcripts${qs ? "?" + qs : ""}`);
+    },
+    managers: (): Promise<string[]> => get("/api/transcripts/managers"),
+    get: (id: number): Promise<Transcript> => get(`/api/transcripts/${id}`),
   },
   articles: {
-    list: (): Promise<Article[]> =>
-      fetch(`${BASE}/api/articles`).then((r) => r.json()),
-    get: (id: number): Promise<Article> =>
-      fetch(`${BASE}/api/articles/${id}`).then((r) => r.json()),
+    list: (): Promise<Article[]> => get("/api/articles"),
+    get: (id: number): Promise<Article> => get(`/api/articles/${id}`),
     generate: (transcriptId: number): Promise<Article> =>
-      fetch(`${BASE}/api/articles/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcriptId }),
-      }).then(async (r) => {
+      post("/api/articles/generate", { transcriptId }).then(async (r) => {
         if (!r.ok) {
           const err = await r.json().catch(() => ({ error: r.statusText }));
           throw new Error(err.error ?? r.statusText);
@@ -58,26 +120,13 @@ export const api = {
       }),
     update: (
       id: number,
-      data: Partial<
-        Pick<Article, "title" | "content" | "status" | "review_comment"> & {
-          reviewedBy: string;
-        }
-      >
-    ): Promise<Article> =>
-      fetch(`${BASE}/api/articles/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      }).then((r) => r.json()),
+      data: Partial<Pick<Article, "title" | "content" | "status" | "review_comment">>
+    ): Promise<Article> => put(`/api/articles/${id}`, data),
     publish: (
       id: number,
       platform: "wordpress" | "megagroup"
     ): Promise<Article> =>
-      fetch(`${BASE}/api/articles/${id}/publish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform }),
-      }).then(async (r) => {
+      post(`/api/articles/${id}/publish`, { platform }).then(async (r) => {
         if (!r.ok) {
           const err = await r.json().catch(() => ({ error: r.statusText }));
           throw new Error(err.error ?? r.statusText);
@@ -85,6 +134,23 @@ export const api = {
         return r.json();
       }),
     delete: (id: number): Promise<void> =>
-      fetch(`${BASE}/api/articles/${id}`, { method: "DELETE" }).then(() => undefined),
+      del(`/api/articles/${id}`).then(() => undefined),
+    unpublish: (id: number, reason: string): Promise<Article> =>
+      post(`/api/articles/${id}/unpublish`, { reason }).then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ error: r.statusText }));
+          throw new Error(err.error ?? r.statusText);
+        }
+        return r.json();
+      }),
+    comments: {
+      list: (id: number): Promise<ArticleComment[]> => get(`/api/articles/${id}/comments`),
+      add: (id: number, selectedText: string, commentText: string): Promise<ArticleComment> =>
+        post(`/api/articles/${id}/comments`, { selectedText, commentText }).then((r) => r.json()),
+      resolve: (id: number, commentId: number, resolved: boolean): Promise<ArticleComment> =>
+        put(`/api/articles/${id}/comments/${commentId}`, { resolved }),
+      remove: (id: number, commentId: number): Promise<void> =>
+        del(`/api/articles/${id}/comments/${commentId}`).then(() => undefined),
+    },
   },
 };
