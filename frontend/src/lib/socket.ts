@@ -4,7 +4,7 @@ let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io({ path: "/socket.io" });
+    socket = io({ path: "/socket.io", transports: ["polling"] });
   }
   return socket;
 }
