@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  skipTrailingSlashRedirect: true,
   async rewrites() {
     const serverUrl = process.env.SERVER_URL ?? "http://localhost:4000";
     return [
@@ -11,6 +12,10 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/socket.io",
+        destination: `${serverUrl}/socket.io/`,
+      },
+      {
+        source: "/socket.io/",
         destination: `${serverUrl}/socket.io/`,
       },
       {
