@@ -170,6 +170,16 @@ export default function ArticleEditorPage({
     setComments((prev) => prev.filter((c) => c.id !== commentId));
   }
 
+  function scrollToMark(commentId: number) {
+    const mark = previewRef.current?.querySelector<HTMLElement>(`mark[data-cid="${commentId}"]`);
+    if (!mark) return;
+    mark.scrollIntoView({ behavior: "smooth", block: "center" });
+    mark.style.transition = "outline 0.1s";
+    mark.style.outline = "2px solid #f59e0b";
+    mark.style.borderRadius = "3px";
+    setTimeout(() => { mark.style.outline = "none"; }, 1200);
+  }
+
   async function reload() {
     const fresh = await api.articles.get(Number(id));
     setArticle(fresh);
@@ -545,17 +555,20 @@ export default function ArticleEditorPage({
             </div>
           )}
 
-          {/* Comments panel — pinned to the right edge, outside the preview box */}
+          {/* Comments panel — desktop: absolute right; mobile: hidden here (shown below) */}
           {comments.filter((c) => !c.resolved || showResolved).length > 0 && (
-            <div className="absolute top-0 left-[calc(100%+16px)] w-72 space-y-2">
+            <div className="hidden lg:block absolute top-0 left-[calc(100%+16px)] w-72 space-y-2">
               {comments
                 .filter((c) => !c.resolved || showResolved)
                 .map((c) => (
-                  <div key={c.id} className={`rounded-xl border p-3 text-sm shadow-sm ${c.resolved ? "border-gray-100 bg-gray-50 opacity-60" : "border-yellow-200 bg-yellow-50"}`}>
+                  <div key={c.id} onClick={() => scrollToMark(c.id)} className={`rounded-xl border p-3 text-sm shadow-sm cursor-pointer ${c.resolved ? "border-gray-100 bg-gray-50 opacity-60" : "border-yellow-200 bg-yellow-50 hover:border-yellow-400"}`}>
                     <blockquote className="border-l-2 border-yellow-400 pl-2 text-xs text-gray-500 italic mb-2 line-clamp-2">
                       «{c.selected_text}»
                     </blockquote>
                     <p className="text-gray-800 mb-2">{c.comment_text}</p>
+                    {c.resolved && c.resolved_by && (
+                      <p className="text-xs text-green-600 mb-1.5">✓ Выполнил: {c.resolved_by}</p>
+                    )}
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="font-medium text-gray-600 text-xs">{c.user_name}</span>
@@ -564,10 +577,10 @@ export default function ArticleEditorPage({
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <button onClick={() => resolveComment(c.id, !c.resolved)} title={c.resolved ? "Открыть снова" : "Решено"} className="text-xs text-gray-400 hover:text-green-600">
+                        <button onClick={(e) => { e.stopPropagation(); resolveComment(c.id, !c.resolved); }} title={c.resolved ? "Открыть снова" : "Решено"} className="text-xs text-gray-400 hover:text-green-600">
                           {c.resolved ? "↩" : "✓"}
                         </button>
-                        <button onClick={() => deleteComment(c.id)} className="text-xs text-gray-300 hover:text-red-400">✕</button>
+                        <button onClick={(e) => { e.stopPropagation(); deleteComment(c.id); }} className="text-xs text-gray-300 hover:text-red-400">✕</button>
                       </div>
                     </div>
                   </div>
@@ -575,6 +588,39 @@ export default function ArticleEditorPage({
             </div>
           )}
         </div>
+
+        {/* Mobile comments — below preview */}
+        {comments.filter((c) => !c.resolved || showResolved).length > 0 && (
+          <div className="lg:hidden mt-3 space-y-2">
+            {comments
+              .filter((c) => !c.resolved || showResolved)
+              .map((c) => (
+                <div key={c.id} onClick={() => scrollToMark(c.id)} className={`rounded-xl border p-3 text-sm shadow-sm cursor-pointer ${c.resolved ? "border-gray-100 bg-gray-50 opacity-60" : "border-yellow-200 bg-yellow-50 hover:border-yellow-400"}`}>
+                  <blockquote className="border-l-2 border-yellow-400 pl-2 text-xs text-gray-500 italic mb-2 line-clamp-2">
+                    «{c.selected_text}»
+                  </blockquote>
+                  <p className="text-gray-800 mb-2">{c.comment_text}</p>
+                  {c.resolved && c.resolved_by && (
+                    <p className="text-xs text-green-600 mb-1.5">✓ Выполнил: {c.resolved_by}</p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-medium text-gray-600 text-xs">{c.user_name}</span>
+                      <span className="text-gray-400 text-xs ml-1">
+                        · {new Date(c.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={(e) => { e.stopPropagation(); resolveComment(c.id, !c.resolved); }} title={c.resolved ? "Открыть снова" : "Решено"} className="text-xs text-gray-400 hover:text-green-600">
+                        {c.resolved ? "↩" : "✓"}
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); deleteComment(c.id); }} className="text-xs text-gray-300 hover:text-red-400">✕</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
 
         {!previewEditing && comments.filter((c) => !c.resolved).length === 0 && (
           <p className="mt-2 text-xs text-gray-400">Выделите текст в превью чтобы оставить комментарий</p>
@@ -689,7 +735,7 @@ export default function ArticleEditorPage({
           )}
 
           {(article.status === "draft" || article.status === "rejected") && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Approve */}
               <div className="rounded-xl border border-green-200 bg-green-50 p-4 flex flex-col gap-3">
                 <p className="text-xs font-semibold text-green-700 uppercase tracking-wider">Одобрить</p>
@@ -728,7 +774,7 @@ export default function ArticleEditorPage({
           )}
 
           {article.status === "approved" && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Publish */}
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex flex-col gap-3">
                 <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Публикация</p>

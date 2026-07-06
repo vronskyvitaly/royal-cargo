@@ -10,6 +10,12 @@ import registerRouter from "./routes/register.js";
 import usersRouter from "./routes/users.js";
 import transcriptsRouter from "./routes/transcripts.js";
 import { requireAuth } from "./middleware/auth.js";
+import pool from "./db.js";
+
+// DB migration: add resolved_by if missing
+pool.query(
+  "ALTER TABLE article_comments ADD COLUMN IF NOT EXISTS resolved_by TEXT"
+).catch((e: unknown) => console.error("Migration error:", e));
 
 const app = express();
 const httpServer = createServer(app);

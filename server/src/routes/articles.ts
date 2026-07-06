@@ -62,25 +62,29 @@ export function createArticlesRouter(io: Server) {
     if (!transcript.transcript_raw)
       return res.status(400).json({ error: "Transcript has no raw text" });
 
-    try {
-      const { title, content } = await generateArticle(
-        transcript.transcript_raw as string,
-        transcript.subject as string
-      );
+    const userName = req.user!.name;
 
-      const { rows: inserted } = await pool.query(
-        `INSERT INTO articles (transcript_id, title, content, status)
-         VALUES ($1, $2, $3, 'draft') RETURNING *`,
-        [transcriptId, title, content]
-      );
+    // Respond immediately — generation runs in background to avoid proxy timeout
+    res.status(202).json({ message: "Генерация запущена" });
 
-      await addHistory(inserted[0].id as number, req.user!.name, "Создал черновик");
-      io.emit("article:created", inserted[0]);
-      return res.json(inserted[0]);
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ error: String(err) });
-    }
+    (async () => {
+      try {
+        const { title, content } = await generateArticle(
+          transcript.transcript_raw as string,
+          transcript.subject as string
+        );
+        const { rows: inserted } = await pool.query(
+          `INSERT INTO articles (transcript_id, title, content, status)
+           VALUES ($1, $2, $3, 'draft') RETURNING *`,
+          [transcriptId, title, content]
+        );
+        await addHistory(inserted[0].id as number, userName, "Создал черновик");
+        io.emit("article:created", inserted[0]);
+      } catch (err) {
+        console.error("Article generation error:", err);
+        io.emit("article:generate_error", { transcriptId, error: String(err) });
+      }
+    })();
   });
 
   // Update article (edit title/content, approve, reject)
@@ -245,9 +249,10 @@ export function createArticlesRouter(io: Server) {
   // Resolve / reopen comment
   router.patch("/:id/comments/:commentId", async (req, res) => {
     const { resolved } = req.body as { resolved: boolean };
+    const resolvedBy = resolved ? req.user!.name : null;
     const { rows } = await pool.query(
-      "UPDATE article_comments SET resolved = $1 WHERE id = $2 AND article_id = $3 RETURNING *",
-      [resolved, req.params.commentId, req.params.id]
+      "UPDATE article_comments SET resolved = $1, resolved_by = $2 WHERE id = $3 AND article_id = $4 RETURNING *",
+      [resolved, resolvedBy, req.params.commentId, req.params.id]
     );
     if (!rows[0]) { res.status(404).json({ error: "Not found" }); return; }
     res.json(rows[0]);

@@ -27,6 +27,14 @@ function put(path: string, body: unknown) {
   }).then((r) => r.json());
 }
 
+function patch(path: string, body: unknown) {
+  return fetch(`${BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+}
+
 function del(path: string) {
   return fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders() });
 }
@@ -72,6 +80,7 @@ export interface ArticleComment {
   selected_text: string;
   comment_text: string;
   resolved: boolean;
+  resolved_by?: string | null;
   created_at: string;
 }
 
@@ -110,8 +119,9 @@ export const api = {
   articles: {
     list: (): Promise<Article[]> => get("/api/articles"),
     get: (id: number): Promise<Article> => get(`/api/articles/${id}`),
-    generate: (transcriptId: number): Promise<Article> =>
+    generate: (transcriptId: number): Promise<Article | null> =>
       post("/api/articles/generate", { transcriptId }).then(async (r) => {
+        if (r.status === 202) return null; // generating in background, result via socket
         if (!r.ok) {
           const err = await r.json().catch(() => ({ error: r.statusText }));
           throw new Error(err.error ?? r.statusText);
@@ -148,7 +158,7 @@ export const api = {
       add: (id: number, selectedText: string, commentText: string): Promise<ArticleComment> =>
         post(`/api/articles/${id}/comments`, { selectedText, commentText }).then((r) => r.json()),
       resolve: (id: number, commentId: number, resolved: boolean): Promise<ArticleComment> =>
-        put(`/api/articles/${id}/comments/${commentId}`, { resolved }),
+        patch(`/api/articles/${id}/comments/${commentId}`, { resolved }),
       remove: (id: number, commentId: number): Promise<void> =>
         del(`/api/articles/${id}/comments/${commentId}`).then(() => undefined),
     },

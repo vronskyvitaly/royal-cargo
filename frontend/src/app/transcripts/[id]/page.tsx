@@ -3,6 +3,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, type Transcript } from "@/lib/api";
+import { getSocket } from "@/lib/socket";
 
 export default function TranscriptPage({
   params,
@@ -19,12 +20,41 @@ export default function TranscriptPage({
     api.transcripts.get(Number(id)).then(setTranscript);
   }, [id]);
 
+  // Listen for background generation result via socket
+  useEffect(() => {
+    const socket = getSocket();
+
+    const onCreated = (article: { id: number; transcript_id: number }) => {
+      if (article.transcript_id === Number(id)) {
+        router.push(`/articles/${article.id}`);
+      }
+    };
+
+    const onError = ({ transcriptId, error: msg }: { transcriptId: number; error: string }) => {
+      if (transcriptId === Number(id)) {
+        setError(msg);
+        setGenerating(false);
+      }
+    };
+
+    socket.on("article:created", onCreated);
+    socket.on("article:generate_error", onError);
+    return () => {
+      socket.off("article:created", onCreated);
+      socket.off("article:generate_error", onError);
+    };
+  }, [id, router]);
+
   async function handleGenerate() {
     setGenerating(true);
     setError(null);
     try {
       const article = await api.articles.generate(Number(id));
-      router.push(`/articles/${article.id}`);
+      if (article) {
+        // Synchronous response (shouldn't happen with 202 flow, but handle gracefully)
+        router.push(`/articles/${article.id}`);
+      }
+      // else: 202 — spinner stays, socket will navigate when ready
     } catch (e) {
       setError(String(e));
       setGenerating(false);
