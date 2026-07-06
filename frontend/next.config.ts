@@ -10,6 +10,10 @@ const nextConfig: NextConfig = {
         destination: `${serverUrl}/api/:path*`,
       },
       {
+        source: "/socket.io",
+        destination: `${serverUrl}/socket.io`,
+      },
+      {
         source: "/socket.io/:path*",
         destination: `${serverUrl}/socket.io/:path*`,
       },
