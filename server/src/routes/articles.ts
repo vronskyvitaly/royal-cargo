@@ -22,7 +22,13 @@ export function createArticlesRouter(io: Server) {
         a.id, a.title, a.status, a.platform, a.published_url,
         a.review_comment, a.reviewed_by, a.last_edited_by, a.created_at, a.updated_at,
         ct.subject AS transcript_subject, ct.call_date, ct.manager_name,
-        a.transcript_id
+        a.transcript_id,
+        ARRAY(
+          SELECT DISTINCT ah.user_name
+          FROM article_history ah
+          WHERE ah.article_id = a.id AND ah.action LIKE 'Одобрил%'
+          ORDER BY ah.user_name
+        ) AS all_reviewers
       FROM articles a
       LEFT JOIN call_transcripts ct ON ct.id = a.transcript_id
       ORDER BY a.updated_at DESC

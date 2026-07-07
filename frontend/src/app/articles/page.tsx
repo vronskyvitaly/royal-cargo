@@ -79,10 +79,10 @@ export default function ArticlesPage() {
 
             {/* Status row */}
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <StatusBadge status={a.status} />
-                {a.reviewed_by && (a.status === "approved" || a.status === "published") && (
-                  <span className="text-xs text-green-600">✓ {a.reviewed_by}</span>
+                {(a.status === "approved" || a.status === "published") && (a.all_reviewers?.length ?? 0) > 0 && (
+                  <span className="text-xs text-green-600">✓ {a.all_reviewers!.join(", ")}</span>
                 )}
                 {a.reviewed_by && a.status === "rejected" && (
                   <span className="text-xs text-red-500">✕ {a.reviewed_by}</span>
@@ -147,8 +147,8 @@ export default function ArticlesPage() {
                 <td className="px-4 py-3 text-center">
                   <div className="flex flex-col items-center gap-1">
                     <StatusBadge status={a.status} />
-                    {a.reviewed_by && (a.status === "approved" || a.status === "published") && (
-                      <span className="text-xs text-green-600">✓ {a.reviewed_by}</span>
+                    {(a.status === "approved" || a.status === "published") && (a.all_reviewers?.length ?? 0) > 0 && (
+                      <span className="text-xs text-green-600 text-center">✓ {a.all_reviewers!.join(", ")}</span>
                     )}
                     {a.reviewed_by && a.status === "rejected" && (
                       <span className="text-xs text-red-500">✕ {a.reviewed_by}</span>

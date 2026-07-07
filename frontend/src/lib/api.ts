@@ -64,6 +64,7 @@ export interface Article {
   published_url: string | null;
   review_comment: string | null;
   reviewed_by: string | null;
+  all_reviewers?: string[];
   last_edited_by: string | null;
   created_at: string;
   updated_at: string;
