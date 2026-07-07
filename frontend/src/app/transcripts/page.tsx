@@ -98,6 +98,14 @@ export default function TranscriptsPage() {
     setPage(1);
   }
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== search) applySearch();
+    }, 500);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
   function changeFilter<T>(setter: (v: T) => void) {
     return (v: T) => { setter(v); setPage(1); };
   }
