@@ -774,7 +774,23 @@ export default function ArticleEditorPage({
           )}
 
           {article.status === "approved" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Approve again */}
+              <div className="rounded-xl border border-green-200 bg-green-50 p-4 flex flex-col gap-3">
+                <p className="text-xs font-semibold text-green-700 uppercase tracking-wider">Одобрить</p>
+                <p className="text-sm text-gray-600">
+                  Одобряете как:{" "}
+                  <span className="font-medium text-gray-800">{user?.name}</span>
+                </p>
+                <button
+                  onClick={() => setStatus("approved")}
+                  disabled={!!actionLoading}
+                  className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading === "approved" ? "Сохранение…" : "Одобрить статью"}
+                </button>
+              </div>
+
               {/* Publish */}
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex flex-col gap-3">
                 <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Публикация</p>
