@@ -83,14 +83,27 @@ export default function TranscriptsPage() {
 
   useEffect(() => {
     const socket = getSocket();
-    socket.on("article:created", (article: Article) => {
+
+    const onCreated = (article: Article) => {
+      setGenerating((prev) => (prev === article.transcript_id ? null : prev));
       setTranscripts((prev) =>
         prev.map((t) =>
           t.id === article.transcript_id ? { ...t, has_article: true } : t
         )
       );
-    });
-    return () => { socket.off("article:created"); };
+    };
+
+    const onError = ({ transcriptId, error: msg }: { transcriptId: number; error: string }) => {
+      setGenerating((prev) => (prev === transcriptId ? null : prev));
+      setError(`Ошибка генерации: ${msg}`);
+    };
+
+    socket.on("article:created", onCreated);
+    socket.on("article:generate_error", onError);
+    return () => {
+      socket.off("article:created", onCreated);
+      socket.off("article:generate_error", onError);
+    };
   }, []);
 
   function applySearch() {
@@ -115,9 +128,9 @@ export default function TranscriptsPage() {
     setError(null);
     try {
       await api.articles.generate(t.id);
+      // 202 returned — spinner stays; socket event will clear it when done
     } catch (e) {
       setError(String(e));
-    } finally {
       setGenerating(null);
     }
   }
