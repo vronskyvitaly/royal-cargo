@@ -60,7 +60,8 @@ router.get("/", async (req, res) => {
       ct.id, ct.lead_id, ct.subject, ct.call_date, ct.manager_name,
       ct.result_type, ct.phone,
       length(ct.transcript_raw) AS transcript_len,
-      EXISTS (SELECT 1 FROM articles a WHERE a.transcript_id = ct.id) AS has_article
+      EXISTS (SELECT 1 FROM articles a WHERE a.transcript_id = ct.id) AS has_article,
+      (SELECT a.id FROM articles a WHERE a.transcript_id = ct.id ORDER BY a.id DESC LIMIT 1) AS article_id
     FROM call_transcripts ct
     ${where}
     ORDER BY ct.call_date DESC
@@ -72,9 +73,11 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, lead_id, lead_url, subject, call_date, manager_name,
-            result_type, phone, transcript_raw, summary
-     FROM call_transcripts WHERE id = $1`,
+    `SELECT ct.id, ct.lead_id, ct.lead_url, ct.subject, ct.call_date, ct.manager_name,
+            ct.result_type, ct.phone, ct.transcript_raw, ct.summary,
+            EXISTS (SELECT 1 FROM articles a WHERE a.transcript_id = ct.id) AS has_article,
+            (SELECT a.id FROM articles a WHERE a.transcript_id = ct.id ORDER BY a.id DESC LIMIT 1) AS article_id
+     FROM call_transcripts ct WHERE ct.id = $1`,
     [req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: "Not found" });

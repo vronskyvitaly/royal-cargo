@@ -1,7 +1,8 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, type Article, type ArticleComment } from "@/lib/api";
+import Link from "next/link";
+import { api, type Article, type ArticleComment, type ArticleBoardCard, type Board, type BoardColumn } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/context/AuthContext";
 import { getSocket } from "@/lib/socket";
@@ -39,6 +40,16 @@ export default function ArticleEditorPage({
   const [addingComment, setAddingComment] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Add to kanban
+  const [showKanbanModal, setShowKanbanModal] = useState(false);
+  const [kanbanBoards, setKanbanBoards] = useState<Board[]>([]);
+  const [kanbanBoardId, setKanbanBoardId] = useState<number | null>(null);
+  const [kanbanColumns, setKanbanColumns] = useState<BoardColumn[]>([]);
+  const [kanbanColumnId, setKanbanColumnId] = useState<number | null>(null);
+  const [kanbanLoading, setKanbanLoading] = useState(false);
+  const [kanbanError, setKanbanError] = useState<string | null>(null);
+  const [kanbanCard, setKanbanCard] = useState<ArticleBoardCard | null>(null);
 
   function applyHighlights(container: HTMLElement, activeComments: ArticleComment[]) {
     // Remove old highlights without disturbing content
@@ -132,6 +143,7 @@ export default function ArticleEditorPage({
       setSavedContent(a.content);
     });
     api.articles.comments.list(nid).then(setComments);
+    api.boards.cardByArticle(nid).then(setKanbanCard);
   }, [id]);
 
   // Live comment sync — other users' comments appear without a refresh
@@ -154,13 +166,29 @@ export default function ArticleEditorPage({
       setComments((prev) => prev.filter((c) => c.id !== commentId));
     };
 
+    const onHistoryAdded = (entry: { id: number; article_id: number; user_name: string; action: string; created_at: string }) => {
+      if (entry.article_id !== numId) return;
+      setArticle((prev) =>
+        prev
+          ? {
+              ...prev,
+              history: prev.history?.some((h) => h.id === entry.id)
+                ? prev.history
+                : [...(prev.history ?? []), entry],
+            }
+          : prev
+      );
+    };
+
     socket.on("article:comment_added", onCommentAdded);
     socket.on("article:comment_resolved", onCommentResolved);
     socket.on("article:comment_deleted", onCommentDeleted);
+    socket.on("article:history_added", onHistoryAdded);
     return () => {
       socket.off("article:comment_added", onCommentAdded);
       socket.off("article:comment_resolved", onCommentResolved);
       socket.off("article:comment_deleted", onCommentDeleted);
+      socket.off("article:history_added", onHistoryAdded);
     };
   }, [id]);
 
@@ -330,6 +358,43 @@ export default function ArticleEditorPage({
     router.push("/articles");
   }
 
+  async function openKanbanModal() {
+    if (kanbanCard) return;
+    setShowKanbanModal(true);
+    setKanbanError(null);
+    setKanbanColumns([]);
+    setKanbanColumnId(null);
+    const boards = await api.boards.list();
+    setKanbanBoards(boards);
+    setKanbanBoardId(boards[0]?.id ?? null);
+  }
+
+  useEffect(() => {
+    if (kanbanBoardId == null) return;
+    api.boards.get(kanbanBoardId).then((b) => {
+      const cols = [...(b.columns ?? [])].sort((a, c) => a.position - c.position);
+      setKanbanColumns(cols);
+      setKanbanColumnId(cols[0]?.id ?? null);
+    });
+  }, [kanbanBoardId]);
+
+  async function addToKanban() {
+    if (!kanbanBoardId || !kanbanColumnId || !article) return;
+    setKanbanLoading(true);
+    setKanbanError(null);
+    try {
+      const card = await api.boards.cards.create(kanbanBoardId, kanbanColumnId, article.title, undefined, article.id);
+      const board = kanbanBoards.find((b) => b.id === kanbanBoardId);
+      const column = kanbanColumns.find((c) => c.id === kanbanColumnId);
+      setKanbanCard({ ...card, board_name: board?.name ?? "", column_name: column?.name ?? "" });
+      setShowKanbanModal(false);
+    } catch (e) {
+      setKanbanError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setKanbanLoading(false);
+    }
+  }
+
   if (!article) {
     return <p className="text-gray-400 p-8 text-center">Загрузка…</p>;
   }
@@ -351,12 +416,30 @@ export default function ArticleEditorPage({
             </span>
           )}
         </div>
-        <button
-          onClick={handleDelete}
-          className="text-xs text-red-400 hover:text-red-600"
-        >
-          Удалить
-        </button>
+        <div className="flex items-center gap-3">
+          {kanbanCard ? (
+            <Link
+              href={`/kanban/${kanbanCard.board_id}`}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-full px-3 py-1.5 transition-colors"
+              title="Открыть карточку на доске"
+            >
+              В канбане: {kanbanCard.board_name} → {kanbanCard.column_name}
+            </Link>
+          ) : (
+            <button
+              onClick={openKanbanModal}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-full px-3 py-1.5 transition-colors"
+            >
+              + В канбан
+            </button>
+          )}
+          <button
+            onClick={handleDelete}
+            className="text-xs text-red-400 hover:text-red-600"
+          >
+            Удалить
+          </button>
+        </div>
       </div>
 
       {/* Source info */}
@@ -906,6 +989,77 @@ export default function ArticleEditorPage({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Add to kanban modal */}
+      {showKanbanModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowKanbanModal(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white shadow-xl p-5 flex flex-col gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Добавить в канбан</h2>
+
+            {kanbanError && (
+              <p className="text-sm text-red-600">{kanbanError}</p>
+            )}
+
+            {kanbanBoards.length === 0 ? (
+              <p className="text-sm text-gray-400">Нет ни одной доски. Создайте доску в разделе «Канбан».</p>
+            ) : (
+              <>
+                <label className="text-xs text-gray-500">
+                  Доска
+                  <select
+                    value={kanbanBoardId ?? ""}
+                    onChange={(e) => setKanbanBoardId(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none"
+                  >
+                    {kanbanBoards.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="text-xs text-gray-500">
+                  Колонка
+                  <select
+                    value={kanbanColumnId ?? ""}
+                    onChange={(e) => setKanbanColumnId(Number(e.target.value))}
+                    disabled={kanbanColumns.length === 0}
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none disabled:bg-gray-50"
+                  >
+                    {kanbanColumns.length === 0 && <option value="">Нет колонок</option>}
+                    {kanbanColumns.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2 mt-1">
+              <button
+                onClick={() => setShowKanbanModal(false)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Отмена
+              </button>
+              {kanbanBoards.length > 0 && (
+                <button
+                  onClick={addToKanban}
+                  disabled={!kanbanBoardId || !kanbanColumnId || kanbanLoading}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                >
+                  {kanbanLoading ? "Добавление…" : "Добавить"}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

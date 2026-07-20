@@ -276,10 +276,10 @@ export default function TranscriptsPage() {
               )}
               {t.has_article ? (
                 <Link
-                  href="/articles"
+                  href={t.article_id ? `/articles/${t.article_id}` : "/articles"}
                   className="flex-1 text-center rounded-lg border border-blue-100 bg-blue-50 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
                 >
-                  Готова →
+                  Открыть →
                 </Link>
               ) : t.transcript_len > 100 ? (
                 <button
@@ -335,7 +335,7 @@ export default function TranscriptsPage() {
                 </td>
                 <td className="px-4 py-3 text-center">
                   {t.has_article ? (
-                    <Link href="/articles" className="text-xs text-blue-600 hover:underline">Готова →</Link>
+                    <Link href={t.article_id ? `/articles/${t.article_id}` : "/articles"} className="text-xs text-blue-600 hover:underline">Открыть →</Link>
                   ) : t.transcript_len > 100 ? (
                     <button
                       onClick={() => handleGenerate(t)}

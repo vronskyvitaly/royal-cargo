@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 const links = [
   { href: "/transcripts", label: "Звонки" },
   { href: "/articles", label: "Статьи" },
+  { href: "/kanban", label: "Канбан" },
   { href: "/users", label: "Пользователи", adminOnly: true },
 ];
 

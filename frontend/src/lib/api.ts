@@ -49,6 +49,7 @@ export interface Transcript {
   phone: string;
   transcript_len: number;
   has_article: boolean;
+  article_id?: number | null;
   transcript_raw?: string;
   summary?: string;
   lead_url?: string;
@@ -83,6 +84,51 @@ export interface ArticleComment {
   resolved: boolean;
   resolved_by?: string | null;
   created_at: string;
+}
+
+export interface Board {
+  id: number;
+  name: string;
+  description: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  column_count?: number;
+  card_count?: number;
+  columns?: BoardColumn[];
+  cards?: BoardCard[];
+}
+
+export interface BoardColumn {
+  id: number;
+  board_id: number;
+  name: string;
+  position: number;
+  created_at: string;
+}
+
+export interface BoardCard {
+  id: number;
+  board_id: number;
+  column_id: number;
+  title: string;
+  description: string | null;
+  position: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  article_id: number | null;
+}
+
+export interface ArticleBoardCard extends BoardCard {
+  board_name: string;
+  column_name: string;
+}
+
+export interface ArticleSearchResult {
+  id: number;
+  title: string;
+  status: "draft" | "approved" | "rejected" | "published";
 }
 
 export interface TranscriptFilters {
@@ -162,6 +208,65 @@ export const api = {
         patch(`/api/articles/${id}/comments/${commentId}`, { resolved }),
       remove: (id: number, commentId: number): Promise<void> =>
         del(`/api/articles/${id}/comments/${commentId}`).then(() => undefined),
+    },
+  },
+  boards: {
+    list: (): Promise<Board[]> => get("/api/boards"),
+    get: (id: number): Promise<Board> => get(`/api/boards/${id}`),
+    create: (name: string, description?: string): Promise<Board> =>
+      post("/api/boards", { name, description }).then((r) => r.json()),
+    update: (id: number, data: { name?: string; description?: string }): Promise<Board> =>
+      patch(`/api/boards/${id}`, data),
+    delete: (id: number): Promise<void> =>
+      del(`/api/boards/${id}`).then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ error: r.statusText }));
+          throw new Error(err.error ?? r.statusText);
+        }
+      }),
+    cardByArticle: (articleId: number): Promise<ArticleBoardCard | null> =>
+      get(`/api/boards/cards/by-article/${articleId}`),
+    searchArticles: (q: string): Promise<ArticleSearchResult[]> =>
+      get(`/api/boards/articles/search?q=${encodeURIComponent(q)}`),
+    columns: {
+      create: (boardId: number, name: string): Promise<BoardColumn> =>
+        post(`/api/boards/${boardId}/columns`, { name }).then((r) => r.json()),
+      rename: (boardId: number, columnId: number, name: string): Promise<BoardColumn> =>
+        patch(`/api/boards/${boardId}/columns/${columnId}`, { name }),
+      remove: (boardId: number, columnId: number): Promise<void> =>
+        del(`/api/boards/${boardId}/columns/${columnId}`).then(async (r) => {
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({ error: r.statusText }));
+            throw new Error(err.error ?? r.statusText);
+          }
+        }),
+      reorder: (boardId: number, columnIds: number[]): Promise<void> =>
+        patch(`/api/boards/${boardId}/columns/reorder`, { columnIds }).then(() => undefined),
+    },
+    cards: {
+      create: (
+        boardId: number,
+        columnId: number,
+        title: string,
+        description?: string,
+        articleId?: number
+      ): Promise<BoardCard> =>
+        post(`/api/boards/${boardId}/cards`, { columnId, title, description, articleId }).then(async (r) => {
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({ error: r.statusText }));
+            throw new Error(err.error ?? r.statusText);
+          }
+          return r.json();
+        }),
+      update: (
+        boardId: number,
+        cardId: number,
+        data: { title?: string; description?: string }
+      ): Promise<BoardCard> => patch(`/api/boards/${boardId}/cards/${cardId}`, data),
+      remove: (boardId: number, cardId: number): Promise<void> =>
+        del(`/api/boards/${boardId}/cards/${cardId}`).then(() => undefined),
+      move: (boardId: number, cardId: number, columnId: number, cardIds: number[]): Promise<void> =>
+        patch(`/api/boards/${boardId}/cards/${cardId}/move`, { columnId, cardIds }).then(() => undefined),
     },
   },
 };

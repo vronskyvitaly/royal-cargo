@@ -73,10 +73,10 @@ export default function TranscriptPage({
         </Link>
         {transcript.has_article ? (
           <Link
-            href="/articles"
+            href={transcript.article_id ? `/articles/${transcript.article_id}` : "/articles"}
             className="rounded-full bg-green-50 border border-green-200 px-4 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100"
           >
-            Статья готова →
+            Открыть →
           </Link>
         ) : transcript.transcript_raw ? (
           <button
