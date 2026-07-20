@@ -184,7 +184,7 @@ export default function ArticleEditorPage({
   async function submitComment() {
     if (!selectionInfo || !commentInput.trim()) return;
     const c = await api.articles.comments.add(Number(id), selectionInfo.text, commentInput.trim());
-    setComments((prev) => [...prev, c]);
+    setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
     setSelectionInfo(null);
     setCommentInput("");
     setAddingComment(false);
