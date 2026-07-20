@@ -261,6 +261,7 @@ export function createArticlesRouter(io: Server) {
       [resolved, resolvedBy, req.params.commentId, req.params.id]
     );
     if (!rows[0]) { res.status(404).json({ error: "Not found" }); return; }
+    io.emit("article:comment_resolved", rows[0]);
     res.json(rows[0]);
   });
 
@@ -270,6 +271,7 @@ export function createArticlesRouter(io: Server) {
       "DELETE FROM article_comments WHERE id = $1 AND article_id = $2",
       [req.params.commentId, req.params.id]
     );
+    io.emit("article:comment_deleted", { id: Number(req.params.commentId), article_id: Number(req.params.id) });
     res.json({ ok: true });
   });
 

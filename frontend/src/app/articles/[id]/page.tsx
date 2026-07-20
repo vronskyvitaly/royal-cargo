@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { api, type Article, type ArticleComment } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/context/AuthContext";
+import { getSocket } from "@/lib/socket";
 
 export default function ArticleEditorPage({
   params,
@@ -131,6 +132,36 @@ export default function ArticleEditorPage({
       setSavedContent(a.content);
     });
     api.articles.comments.list(nid).then(setComments);
+  }, [id]);
+
+  // Live comment sync — other users' comments appear without a refresh
+  useEffect(() => {
+    const socket = getSocket();
+    const numId = Number(id);
+
+    const onCommentAdded = (comment: ArticleComment) => {
+      if (comment.article_id !== numId) return;
+      setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
+    };
+
+    const onCommentResolved = (comment: ArticleComment) => {
+      if (comment.article_id !== numId) return;
+      setComments((prev) => prev.map((c) => (c.id === comment.id ? comment : c)));
+    };
+
+    const onCommentDeleted = ({ id: commentId, article_id }: { id: number; article_id: number }) => {
+      if (article_id !== numId) return;
+      setComments((prev) => prev.filter((c) => c.id !== commentId));
+    };
+
+    socket.on("article:comment_added", onCommentAdded);
+    socket.on("article:comment_resolved", onCommentResolved);
+    socket.on("article:comment_deleted", onCommentDeleted);
+    return () => {
+      socket.off("article:comment_added", onCommentAdded);
+      socket.off("article:comment_resolved", onCommentResolved);
+      socket.off("article:comment_deleted", onCommentDeleted);
+    };
   }, [id]);
 
   function handlePreviewMouseUp() {
