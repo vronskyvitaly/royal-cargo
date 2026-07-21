@@ -12,6 +12,7 @@ node_modules
 frontend/.next
 frontend/out
 frontend/.env
+frontend/tsconfig.tsbuildinfo
 
 # Express.js
 server/.env
