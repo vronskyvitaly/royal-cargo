@@ -451,7 +451,7 @@ function KanbanColumn({
     <div
       ref={setNodeRef}
       style={style}
-      className="shrink-0 w-72 rounded-xl border border-gray-200 bg-gray-50 shadow-sm flex flex-col max-h-[calc(100vh-220px)]"
+      className="shrink-0 w-72 rounded-xl border border-gray-200 bg-gray-50 shadow-sm flex flex-col h-[calc(100vh-220px)]"
     >
       <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-gray-200">
         <button
@@ -657,7 +657,7 @@ function KanbanCard({
               href={`/articles/${card.article_id}`}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
-              className="text-gray-300 hover:text-indigo-600"
+              className="text-gray-700 hover:text-indigo-600"
               title="Открыть статью"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -669,7 +669,7 @@ function KanbanCard({
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setEditing(true)}
-            className="text-gray-300 hover:text-indigo-600 text-xs"
+            className="text-gray-700 hover:text-indigo-600 text-xs"
             title="Редактировать"
           >
             ✎
@@ -677,7 +677,7 @@ function KanbanCard({
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={onDelete}
-            className="text-gray-300 hover:text-red-500 text-xs"
+            className="text-gray-700 hover:text-red-500 text-xs"
             title="Удалить"
           >
             ✕
