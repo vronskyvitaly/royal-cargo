@@ -1,16 +1,17 @@
 # Royal Cargo — Редакция SEO-статей
 
-Веб-приложение для автоматической генерации и публикации SEO-статей на основе расшифровок телефонных звонков. Руководитель и отдел маркетинга просматривают сгенерированный контент, редактируют, одобряют или отклоняют, после чего статьи публикуются на сайтах компании.
+Веб-приложение для автоматической генерации и публикации SEO-статей на основе расшифровок телефонных звонков. Менеджеры просматривают звонки → генерируют статьи через Claude AI → редакторы обсуждают, правят и одобряют → статьи публикуются на сайтах компании. Отдельно статьи можно вести по канбан-доскам (например, по стадиям редакции или ответственным отделам).
 
 ## Стек
 
 | Слой | Технологии |
 |---|---|
-| Фронтенд | Next.js 16 (App Router), TypeScript, Tailwind CSS |
-| Бэкенд | Express 5, Socket.io, TypeScript, tsx |
-| База данных | PostgreSQL |
-| AI | Claude Sonnet (Anthropic API) |
+| Фронтенд | Next.js 16 (App Router), TypeScript, Tailwind CSS 4, dnd-kit |
+| Бэкенд | Express 5, Socket.IO, TypeScript, tsx |
+| База данных | PostgreSQL (без миграционного фреймворка — `CREATE/ALTER ... IF NOT EXISTS` при старте сервера) |
+| AI | Claude (Anthropic API) |
 | Публикация | WordPress REST API, Megagroup API |
+| Справочники | Alta.ru API (актуальные НПА/ТН ВЭД для генерации статей) |
 
 ## Как это работает
 
@@ -21,12 +22,25 @@
       ↓
 Менеджер открывает звонок → нажимает «Создать статью»
       ↓
-Claude Sonnet генерирует SEO-статью по транскрипту
+Claude генерирует SEO-статью по транскрипту (асинхронно, в фоне)
       ↓
-Руководитель / маркетинг редактирует → Одобряет или Отклоняет
+Редактор комментирует / правит текст → Одобряет или Отклоняет
+      ↓
+(опционально) Статья привязывается карточкой к канбан-доске
       ↓
 Публикация в WordPress или Megagroup
 ```
+
+Все действия по статье (создание черновика, одобрение, отклонение, возврат на доработку, правки, публикация, снятие с публикации, добавление в канбан, перемещение по канбану) пишутся в историю изменений статьи и синхронизируются между открытыми вкладками в реальном времени через Socket.IO.
+
+## Роли
+
+| Роль | Права |
+|---|---|
+| `editor` | Работа со звонками и статьями: генерация, правка, одобрение/отклонение, комментарии, публикация, работа с канбан-досками (кроме удаления доски/колонки) |
+| `admin` | Всё то же + управление пользователями, удаление досок и колонок в канбане |
+
+Вход требует email + пароль + общий `appSecret` (код приложения, хранится в таблице `settings` или переменной `APP_SECRET`).
 
 ## Структура проекта
 
@@ -38,36 +52,53 @@ royal-cargo/
 │       │   ├── transcripts/        # Список звонков
 │       │   ├── transcripts/[id]/   # Расшифровка звонка
 │       │   ├── articles/           # Список статей
-│       │   └── articles/[id]/      # Редактор статьи
+│       │   ├── articles/[id]/      # Редактор статьи, комментарии, история
+│       │   ├── kanban/             # Список канбан-досок
+│       │   ├── kanban/[id]/        # Доска: колонки, карточки, drag-n-drop
+│       │   ├── users/              # Управление пользователями (только admin)
+│       │   ├── profile/            # Профиль пользователя
+│       │   └── login/, register/
+│       ├── context/
+│       │   └── AuthContext.tsx     # JWT-сессия, текущий пользователь
 │       ├── components/
 │       └── lib/
 │           ├── api.ts              # HTTP-клиент
-│           └── socket.ts           # Socket.io клиент
+│           └── socket.ts           # Socket.io клиент (singleton, polling)
 └── server/            # Express API
     └── src/
         ├── routes/
         │   ├── transcripts.ts
-        │   └── articles.ts
+        │   ├── articles.ts         # Статьи, комментарии, история, публикация
+        │   ├── boards.ts           # Канбан-доски, колонки, карточки
+        │   ├── auth.ts, register.ts, profile.ts, users.ts
+        ├── middleware/
+        │   └── auth.ts             # requireAuth, requireAdmin
         └── services/
             ├── claude.ts           # Генерация статей
             ├── wordpress.ts        # Публикация в WP
-            └── megagroup.ts        # Публикация в Megagroup
+            ├── megagroup.ts        # Публикация в Megagroup
+            ├── alta.ts             # НПА/тарифы с alta.ru для промпта генерации
+            └── settings.ts
 ```
 
 ## Статусы статей
 
 ```
 draft → approved → published
-  ↓
-rejected
+  ↓        ↑
+rejected ──┘
 ```
 
 | Статус | Описание |
 |---|---|
-| `draft` | Только что сгенерирована Claude |
-| `approved` | Одобрена руководителем / маркетингом |
+| `draft` | Только что сгенерирована Claude / возвращена на доработку |
+| `approved` | Одобрена редактором |
 | `rejected` | Отклонена с комментарием |
-| `published` | Опубликована на сайте |
+| `published` | Опубликована на сайте (WordPress или Megagroup) |
+
+## Канбан-доски
+
+Доски со свободными колонками для организации работы редакции. Карточку можно создать либо как обычный текст, либо привязать к ней конкретную статью через поиск по названию — у каждой статьи может быть не более одной связанной карточки (обеспечивается уникальным индексом в БД). На странице статьи видно, в каком канбане и колонке она находится, с прямой ссылкой на доску; на карточке — обратная ссылка на статью. Добавление статьи в канбан и перенос карточки между колонками пишутся в историю статьи в реальном времени. Удалять доски и колонки может только `admin`.
 
 ## Запуск
 
@@ -94,6 +125,9 @@ npm install
 ```env
 DATABASE_URL=postgres://user:password@host:5432/dbname
 
+JWT_SECRET=...
+APP_SECRET=...
+
 CLAUDE_API_KEY=sk-ant-...
 CLAUDE_MODEL=claude-sonnet-4-6
 
@@ -110,7 +144,7 @@ FRONTEND_URL=http://localhost:3000
 
 **`frontend/.env`**
 ```env
-NEXT_PUBLIC_SERVER_URL=http://localhost:4000
+SERVER_URL=http://localhost:4000
 ```
 
 ### Запуск в режиме разработки
@@ -134,18 +168,65 @@ cd frontend && npm run build && npm start
 
 ## API
 
+### Звонки
+
 | Метод | Путь | Описание |
 |---|---|---|
-| `GET` | `/api/transcripts` | Список звонков |
+| `GET` | `/api/transcripts` | Список звонков (пагинация, поиск, фильтры) |
+| `GET` | `/api/transcripts/managers` | Список менеджеров для фильтра |
 | `GET` | `/api/transcripts/:id` | Звонок с расшифровкой |
-| `GET` | `/api/articles` | Список статей |
-| `GET` | `/api/articles/:id` | Статья |
-| `POST` | `/api/articles/generate` | Сгенерировать статью из транскрипта |
-| `PUT` | `/api/articles/:id` | Обновить / одобрить / отклонить |
-| `POST` | `/api/articles/:id/publish` | Опубликовать на платформе |
-| `DELETE` | `/api/articles/:id` | Удалить статью |
 
-## Socket.io события
+### Статьи
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/articles` | Список статей |
+| `GET` | `/api/articles/:id` | Статья + история изменений |
+| `POST` | `/api/articles/generate` | Сгенерировать статью из транскрипта (202, результат — по сокету) |
+| `PUT` | `/api/articles/:id` | Обновить текст / статус (одобрить, отклонить, вернуть в черновик) |
+| `POST` | `/api/articles/:id/publish` | Опубликовать на платформе |
+| `POST` | `/api/articles/:id/unpublish` | Снять с публикации |
+| `DELETE` | `/api/articles/:id` | Удалить статью |
+| `GET` | `/api/articles/:id/comments` | Комментарии к статье |
+| `POST` | `/api/articles/:id/comments` | Добавить комментарий к выделению |
+| `PATCH` | `/api/articles/:id/comments/:commentId` | Пометить комментарий решённым |
+| `DELETE` | `/api/articles/:id/comments/:commentId` | Удалить комментарий |
+
+### Канбан
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/boards` | Список досок |
+| `POST` | `/api/boards` | Создать доску |
+| `GET` | `/api/boards/:id` | Доска с колонками и карточками |
+| `PATCH` | `/api/boards/:id` | Переименовать доску |
+| `DELETE` | `/api/boards/:id` | Удалить доску (только admin) |
+| `GET` | `/api/boards/articles/search?q=` | Поиск статей, ещё не привязанных к канбану |
+| `GET` | `/api/boards/cards/by-article/:articleId` | Найти карточку, связанную со статьёй |
+| `POST` | `/api/boards/:id/columns` | Создать колонку |
+| `PATCH` | `/api/boards/:id/columns/:columnId` | Переименовать колонку |
+| `DELETE` | `/api/boards/:id/columns/:columnId` | Удалить колонку (только admin) |
+| `PATCH` | `/api/boards/:id/columns/reorder` | Изменить порядок колонок |
+| `POST` | `/api/boards/:id/cards` | Создать карточку (текст или привязанная статья) |
+| `PATCH` | `/api/boards/:id/cards/:cardId` | Обновить карточку |
+| `DELETE` | `/api/boards/:id/cards/:cardId` | Удалить карточку |
+| `PATCH` | `/api/boards/:id/cards/:cardId/move` | Переместить карточку между/внутри колонок |
+
+### Пользователи и профиль
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/auth/login` | Вход (email + пароль + appSecret) |
+| `GET` | `/api/auth/me` | Текущий пользователь |
+| `POST` | `/api/register` | Регистрация |
+| `GET` | `/api/profile` | Профиль текущего пользователя |
+| `PUT` | `/api/profile`, `/api/profile/password` | Обновить профиль / пароль |
+| `GET` | `/api/users` | Список пользователей (только admin) |
+| `POST` | `/api/users` | Создать пользователя (только admin) |
+| `PUT` | `/api/users/:id/role`, `/:id/password` | Управление пользователем (только admin) |
+| `DELETE` | `/api/users/:id` | Удалить пользователя (только admin) |
+
+## Socket.IO события
 
 | Событие | Данные | Когда |
 |---|---|---|
@@ -153,3 +234,13 @@ cd frontend && npm run build && npm start
 | `article:updated` | `Article` | После правки / смены статуса |
 | `article:published` | `Article` | После публикации |
 | `article:deleted` | `{ id }` | После удаления |
+| `article:generate_error` | `{ transcriptId, error }` | Ошибка фоновой генерации |
+| `article:comment_added` / `_resolved` / `_deleted` | `ArticleComment` / `{ id, article_id }` | Изменения комментариев |
+| `article:history_added` | запись истории | Новое событие в истории статьи (в т.ч. из канбана) |
+| `board:created` / `_updated` / `_deleted` | `Board` / `{ id }` | Изменения доски |
+| `column:created` / `_updated` / `_deleted` | `BoardColumn` / `{ id, board_id }` | Изменения колонки |
+| `columns:reordered` | `{ board_id, order }` | Изменён порядок колонок |
+| `card:created` / `_updated` / `_deleted` | `BoardCard` / `{ id, board_id }` | Изменения карточки |
+| `card:moved` | `{ board_id, column_id, order }` | Перемещение карточки |
+
+Клиент Socket.IO работает только на polling-транспорте (`transports: ["polling"]`) — WebSocket-апгрейд не проходит через прокси Next.js.
