@@ -1113,7 +1113,7 @@ export default function ArticleEditorPage({
                             if (e.key === "Escape") cancelEditDiscussion();
                           }}
                           rows={2}
-                          className="w-full rounded-lg border border-indigo-300 px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none"
+                          className="w-full rounded-lg border border-indigo-300 px-3 py-2 text-base sm:text-sm text-gray-800 focus:outline-none resize-none"
                         />
                         <div className="flex gap-2">
                           <button
@@ -1174,7 +1174,7 @@ export default function ArticleEditorPage({
               }}
               placeholder="Написать комментарий к статье…"
               rows={2}
-              className="flex-1 min-w-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none resize-none"
+              className="flex-1 min-w-0 rounded-lg border border-gray-200 px-3 py-2 text-base sm:text-sm text-gray-800 focus:border-indigo-400 focus:outline-none resize-none"
             />
           </div>
           <div className="flex justify-end mt-2">
