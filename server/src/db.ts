@@ -1,12 +1,14 @@
 import pg, { Pool } from "pg";
 
-// Timestamps in DB are stored as TIMESTAMP WITHOUT TIME ZONE in Moscow local time.
-// The pg library converts them using the OS timezone (UTC+2), shifting the time.
-// By overriding the type parser we append +03:00 (Moscow) so the returned string
-// is a proper ISO timestamp that JS/frontend can parse correctly.
+// Timestamps are stored as TIMESTAMP WITHOUT TIME ZONE, written via NOW()/DEFAULT NOW().
+// The PostgreSQL session timezone is UTC, so those columns actually hold UTC wall-clock
+// values (confirmed via `SHOW timezone` / `NOW()::timestamp` on the DB) — not Moscow time,
+// despite the value being timezone-less. By overriding the type parser we append +00:00 so
+// the returned string is a proper ISO timestamp; the frontend then renders it in
+// Europe/Moscow via toLocaleString(..., { timeZone: "Europe/Moscow" }).
 pg.types.setTypeParser(1114, (val: string) => {
   // val looks like "2026-07-03 13:05:12"
-  return val ? val.replace(" ", "T") + "+03:00" : val;
+  return val ? val.replace(" ", "T") + "+00:00" : val;
 });
 
 const pool = new Pool({
