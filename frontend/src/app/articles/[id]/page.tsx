@@ -33,6 +33,7 @@ export default function ArticleEditorPage({
   const [savedContent, setSavedContent] = useState("");
   const [previewEditing, setPreviewEditing] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  const [regenerating, setRegenerating] = useState(false);
 
   // Inline comments
   const [comments, setComments] = useState<ArticleComment[]>([]);
@@ -149,8 +150,8 @@ export default function ArticleEditorPage({
       setSavedTitle(a.title);
       setSavedContent(a.content);
       setDiscussion(a.discussion ?? []);
+      setComments(a.comments ?? []);
     });
-    api.articles.comments.list(nid).then(setComments);
     api.boards.cardByArticle(nid).then(setKanbanCard);
   }, [id]);
 
@@ -208,6 +209,26 @@ export default function ArticleEditorPage({
       setDiscussion((prev) => prev.map((c) => (c.id === comment.id ? comment : c)));
     };
 
+    const onRegenerated = (updated: { id: number; version_number: number }) => {
+      if (updated.id !== numId) return;
+      setRegenerating(false);
+      api.articles.get(numId, updated.version_number).then((fresh) => {
+        setArticle(fresh);
+        setTitle(fresh.title);
+        setContent(fresh.content);
+        setSavedTitle(fresh.title);
+        setSavedContent(fresh.content);
+        setDiscussion(fresh.discussion ?? []);
+        setComments(fresh.comments ?? []);
+      });
+    };
+
+    const onGenerateError = (payload: { transcriptId: number; articleId?: number; error: string }) => {
+      if (payload.articleId !== numId) return;
+      setRegenerating(false);
+      setError(`Ошибка перегенерации: ${payload.error}`);
+    };
+
     socket.on("article:comment_added", onCommentAdded);
     socket.on("article:comment_resolved", onCommentResolved);
     socket.on("article:comment_deleted", onCommentDeleted);
@@ -216,6 +237,8 @@ export default function ArticleEditorPage({
     socket.on("article:discussion_added", onDiscussionAdded);
     socket.on("article:discussion_deleted", onDiscussionDeleted);
     socket.on("article:discussion_updated", onDiscussionUpdated);
+    socket.on("article:regenerated", onRegenerated);
+    socket.on("article:generate_error", onGenerateError);
     return () => {
       socket.off("article:comment_added", onCommentAdded);
       socket.off("article:comment_resolved", onCommentResolved);
@@ -225,6 +248,8 @@ export default function ArticleEditorPage({
       socket.off("article:discussion_added", onDiscussionAdded);
       socket.off("article:discussion_deleted", onDiscussionDeleted);
       socket.off("article:discussion_updated", onDiscussionUpdated);
+      socket.off("article:regenerated", onRegenerated);
+      socket.off("article:generate_error", onGenerateError);
     };
   }, [id]);
 
@@ -246,8 +271,8 @@ export default function ArticleEditorPage({
   }
 
   async function submitComment() {
-    if (!selectionInfo || !commentInput.trim()) return;
-    const c = await api.articles.comments.add(Number(id), selectionInfo.text, commentInput.trim());
+    if (!selectionInfo || !commentInput.trim() || !article?.version_id) return;
+    const c = await api.articles.comments.add(Number(id), selectionInfo.text, commentInput.trim(), article.version_id);
     setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
     setSelectionInfo(null);
     setCommentInput("");
@@ -277,10 +302,10 @@ export default function ArticleEditorPage({
   }
 
   async function submitDiscussion() {
-    if (!discussionInput.trim()) return;
+    if (!discussionInput.trim() || !article?.version_id) return;
     const text = discussionInput.trim();
     setDiscussionInput("");
-    const c = await api.articles.discussion.add(Number(id), text);
+    const c = await api.articles.discussion.add(Number(id), text, article.version_id);
     setDiscussion((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
   }
 
@@ -317,16 +342,31 @@ export default function ArticleEditorPage({
     setTimeout(() => { mark.style.outline = "none"; }, 1200);
   }
 
-  async function reload() {
-    const fresh = await api.articles.get(Number(id));
+  async function reload(versionNumber?: number) {
+    const fresh = await api.articles.get(Number(id), versionNumber ?? article?.version_number);
     setArticle(fresh);
     setTitle(fresh.title);
     setContent(fresh.content);
     setSavedTitle(fresh.title);
     setSavedContent(fresh.content);
+    setDiscussion(fresh.discussion ?? []);
+    setComments(fresh.comments ?? []);
+  }
+
+  async function switchVersion(versionNumber: number) {
+    if (!article || article.version_number === versionNumber) return;
+    setPreviewEditing(false);
+    setSelectionInfo(null);
+    setAddingComment(false);
+    setShowReturn(false);
+    setShowUnpublish(false);
+    setRejectComment("");
+    setReturnReason("");
+    await reload(versionNumber);
   }
 
   async function save() {
+    if (!article?.version_id) return;
     setLoading(true);
     setError(null);
     try {
@@ -336,7 +376,7 @@ export default function ArticleEditorPage({
       const h1 = div.querySelector("h1");
       if (h1) h1.textContent = title;
       const contentToSave = div.innerHTML;
-      await api.articles.update(Number(id), { title, content: contentToSave });
+      await api.articles.update(Number(id), article.version_id, { title, content: contentToSave });
       await reload();
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -348,10 +388,11 @@ export default function ArticleEditorPage({
   }
 
   async function setStatus(status: "approved" | "rejected") {
+    if (!article?.version_id) return;
     setActionLoading(status);
     setError(null);
     try {
-      await api.articles.update(Number(id), {
+      await api.articles.update(Number(id), article.version_id, {
         status,
         ...(status === "rejected" ? { review_comment: rejectComment } : {}),
       });
@@ -364,10 +405,11 @@ export default function ArticleEditorPage({
   }
 
   async function returnToDraft() {
+    if (!article?.version_id) return;
     setActionLoading("return");
     setError(null);
     try {
-      await api.articles.update(Number(id), {
+      await api.articles.update(Number(id), article.version_id, {
         status: "draft",
         ...(returnReason.trim() ? { review_comment: returnReason.trim() } : {}),
       });
@@ -378,6 +420,39 @@ export default function ArticleEditorPage({
       setError(String(e));
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  async function makeCurrent() {
+    if (!article?.version_id) return;
+    setActionLoading("make-current");
+    setError(null);
+    try {
+      await api.articles.makeCurrent(Number(id), article.version_id);
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function regenerate() {
+    if (!article?.transcript_id) return;
+    if (
+      !confirm(
+        "Перегенерировать статью? Будет создана новая версия на основе звонка. Текущая версия останется доступна в истории версий."
+      )
+    )
+      return;
+    setRegenerating(true);
+    setError(null);
+    try {
+      await api.articles.regenerate(Number(id));
+      // Result arrives via "article:regenerated" socket event
+    } catch (e) {
+      setError(String(e));
+      setRegenerating(false);
     }
   }
 
@@ -545,6 +620,16 @@ export default function ArticleEditorPage({
               + В канбан
             </button>
           )}
+          {isEditable && article.transcript_id && (
+            <button
+              onClick={regenerate}
+              disabled={regenerating}
+              className="shrink-0 whitespace-nowrap text-xs font-medium text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 rounded-full px-3 py-1.5 transition-colors disabled:opacity-50"
+              title="Сгенерировать новую версию статьи заново по звонку"
+            >
+              {regenerating ? "Перегенерация…" : "↻ Перегенерировать"}
+            </button>
+          )}
           <button
             onClick={handleDelete}
             className="shrink-0 whitespace-nowrap text-xs text-red-400 hover:text-red-600"
@@ -553,6 +638,49 @@ export default function ArticleEditorPage({
           </button>
         </div>
       </div>
+
+      {/* Version switcher */}
+      {article.versions && article.versions.length > 1 && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-400 mr-1">Версии:</span>
+          {article.versions.map((v) => {
+            const isViewing = v.version_number === article.version_number;
+            const isCurrent = v.id === article.current_version_id;
+            return (
+              <button
+                key={v.id}
+                onClick={() => switchVersion(v.version_number)}
+                title={`${v.created_by} · ${new Date(v.created_at).toLocaleString("ru-RU", {
+                  day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow",
+                })}`}
+                className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  isViewing
+                    ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                    : "border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                v{v.version_number}
+                {isCurrent && <span className="text-[10px] text-indigo-400">● текущая</span>}
+              </button>
+            );
+          })}
+          {!article.is_current_version && (
+            <button
+              onClick={makeCurrent}
+              disabled={actionLoading === "make-current"}
+              className="ml-1 rounded-full border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+            >
+              {actionLoading === "make-current" ? "Применение…" : "Сделать текущей"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {!article.is_current_version && (
+        <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
+          Вы просматриваете не текущую версию статьи (v{article.version_number}). Публикация и снятие с публикации применяются только к текущей версии.
+        </div>
+      )}
 
       {/* Source info */}
       {article.transcript_subject && (
@@ -894,12 +1022,15 @@ export default function ArticleEditorPage({
               const isApprove = h.action.startsWith("Одобрил");
               const isReject = h.action.startsWith("Отклонил");
               const isPublish = h.action.startsWith("Опубликовал");
+              const isRegenerate = h.action.startsWith("Перегенерировал");
               const dotColor = isApprove
                 ? "bg-green-400"
                 : isReject
                 ? "bg-red-400"
                 : isPublish
                 ? "bg-blue-400"
+                : isRegenerate
+                ? "bg-purple-400"
                 : "bg-gray-300";
               return (
                 <li key={h.id} className="relative flex gap-4">
@@ -911,7 +1042,7 @@ export default function ArticleEditorPage({
                     <div>
                       <span className="text-sm font-medium text-gray-700">{h.user_name}</span>
                       <span className="text-sm text-gray-400"> · </span>
-                      <span className={`text-sm ${isApprove ? "text-green-600" : isReject ? "text-red-500" : isPublish ? "text-blue-600" : "text-gray-500"}`}>
+                      <span className={`text-sm ${isApprove ? "text-green-600" : isReject ? "text-red-500" : isPublish ? "text-blue-600" : isRegenerate ? "text-purple-600" : "text-gray-500"}`}>
                         {h.action}
                       </span>
                     </div>
@@ -1059,7 +1190,7 @@ export default function ArticleEditorPage({
       </div>
 
       {/* Unpublish — admin only */}
-      {article.status === "published" && user?.role === "admin" && (
+      {article.status === "published" && user?.role === "admin" && article.is_current_version && (
         <div className="mt-4">
           {!showUnpublish ? (
             <button
@@ -1170,17 +1301,20 @@ export default function ArticleEditorPage({
               {/* Publish */}
               <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex flex-col gap-3">
                 <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Публикация</p>
+                {!article.is_current_version && (
+                  <p className="text-xs text-amber-600">Сначала сделайте эту версию текущей</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => publish("wordpress")}
-                    disabled={!!actionLoading}
+                    disabled={!!actionLoading || !article.is_current_version}
                     className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
                     {actionLoading === "publish-wordpress" ? "Публикация…" : "WordPress"}
                   </button>
                   <button
                     onClick={() => publish("megagroup")}
-                    disabled={!!actionLoading}
+                    disabled={!!actionLoading || !article.is_current_version}
                     className="rounded-lg border border-blue-300 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 transition-colors"
                   >
                     {actionLoading === "publish-megagroup" ? "Публикация…" : "Megagroup"}

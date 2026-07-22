@@ -19,14 +19,6 @@ function post(path: string, body: unknown) {
   });
 }
 
-function put(path: string, body: unknown) {
-  return fetch(`${BASE}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(body),
-  }).then((r) => r.json());
-}
-
 function patch(path: string, body: unknown) {
   return fetch(`${BASE}${path}`, {
     method: "PATCH",
@@ -78,13 +70,32 @@ export interface Article {
   liked_by_me?: boolean;
   liked_by?: string[];
   comment_count?: number;
+  version_count?: number;
+  current_version_id?: number;
+  version_id?: number;
+  version_number?: number;
+  is_current_version?: boolean;
   history?: { id: number; user_name: string; action: string; created_at: string }[];
   discussion?: ArticleDiscussionComment[];
+  comments?: ArticleComment[];
+  versions?: ArticleVersion[];
+}
+
+export interface ArticleVersion {
+  id: number;
+  version_number: number;
+  status: "draft" | "approved" | "rejected" | "published";
+  platform: "wordpress" | "megagroup" | null;
+  published_url: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ArticleDiscussionComment {
   id: number;
   article_id: number;
+  version_id: number;
   user_name: string;
   comment_text: string;
   created_at: string;
@@ -94,6 +105,7 @@ export interface ArticleDiscussionComment {
 export interface ArticleComment {
   id: number;
   article_id: number;
+  version_id: number;
   user_name: string;
   selected_text: string;
   comment_text: string;
@@ -181,7 +193,8 @@ export const api = {
   },
   articles: {
     list: (): Promise<Article[]> => get("/api/articles"),
-    get: (id: number): Promise<Article> => get(`/api/articles/${id}`),
+    get: (id: number, versionNumber?: number): Promise<Article> =>
+      get(`/api/articles/${id}${versionNumber ? `?version=${versionNumber}` : ""}`),
     generate: (transcriptId: number): Promise<Article | null> =>
       post("/api/articles/generate", { transcriptId }).then(async (r) => {
         if (r.status === 202) return null; // generating in background, result via socket
@@ -191,10 +204,36 @@ export const api = {
         }
         return r.json();
       }),
+    regenerate: (id: number): Promise<void> =>
+      post(`/api/articles/${id}/regenerate`, {}).then(async (r) => {
+        if (r.status === 202) return;
+        const err = await r.json().catch(() => ({ error: r.statusText }));
+        throw new Error(err.error ?? r.statusText);
+      }),
     update: (
       id: number,
+      versionId: number,
       data: Partial<Pick<Article, "title" | "content" | "status" | "review_comment">>
-    ): Promise<Article> => put(`/api/articles/${id}`, data),
+    ): Promise<Article> =>
+      fetch(`${BASE}/api/articles/${id}/versions/${versionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(data),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ error: r.statusText }));
+          throw new Error(err.error ?? r.statusText);
+        }
+        return r.json();
+      }),
+    makeCurrent: (id: number, versionId: number): Promise<Article> =>
+      post(`/api/articles/${id}/versions/${versionId}/make-current`, {}).then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ error: r.statusText }));
+          throw new Error(err.error ?? r.statusText);
+        }
+        return r.json();
+      }),
     publish: (
       id: number,
       platform: "wordpress" | "megagroup"
@@ -217,9 +256,10 @@ export const api = {
         return r.json();
       }),
     comments: {
-      list: (id: number): Promise<ArticleComment[]> => get(`/api/articles/${id}/comments`),
-      add: (id: number, selectedText: string, commentText: string): Promise<ArticleComment> =>
-        post(`/api/articles/${id}/comments`, { selectedText, commentText }).then((r) => r.json()),
+      list: (id: number, versionId?: number): Promise<ArticleComment[]> =>
+        get(`/api/articles/${id}/comments${versionId ? `?versionId=${versionId}` : ""}`),
+      add: (id: number, selectedText: string, commentText: string, versionId: number): Promise<ArticleComment> =>
+        post(`/api/articles/${id}/comments`, { selectedText, commentText, versionId }).then((r) => r.json()),
       resolve: (id: number, commentId: number, resolved: boolean): Promise<ArticleComment> =>
         patch(`/api/articles/${id}/comments/${commentId}`, { resolved }),
       remove: (id: number, commentId: number): Promise<void> =>
@@ -228,9 +268,10 @@ export const api = {
     like: (id: number): Promise<{ liked: boolean; like_count: number; liked_by: string[] }> =>
       post(`/api/articles/${id}/like`, {}).then((r) => r.json()),
     discussion: {
-      list: (id: number): Promise<ArticleDiscussionComment[]> => get(`/api/articles/${id}/discussion`),
-      add: (id: number, commentText: string): Promise<ArticleDiscussionComment> =>
-        post(`/api/articles/${id}/discussion`, { commentText }).then((r) => r.json()),
+      list: (id: number, versionId?: number): Promise<ArticleDiscussionComment[]> =>
+        get(`/api/articles/${id}/discussion${versionId ? `?versionId=${versionId}` : ""}`),
+      add: (id: number, commentText: string, versionId: number): Promise<ArticleDiscussionComment> =>
+        post(`/api/articles/${id}/discussion`, { commentText, versionId }).then((r) => r.json()),
       update: (id: number, commentId: number, commentText: string): Promise<ArticleDiscussionComment> =>
         fetch(`${BASE}/api/articles/${id}/discussion/${commentId}`, {
           method: "PATCH",
