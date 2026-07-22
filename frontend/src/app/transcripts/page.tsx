@@ -1,6 +1,7 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import BidirectionalList, { type BidirectionalListProps } from "broad-infinite-list/react";
 import { api, type Transcript, type TranscriptFilters } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import type { Article } from "@/lib/api";
@@ -18,6 +19,9 @@ const RESULT_LABELS: Record<string, string> = {
 };
 
 const LIMIT = 25;
+// Generous DOM window — old rows only get trimmed from memory after scrolling
+// past ~8 pages worth of results; typical result sets never hit this.
+const VIEW_COUNT = 200;
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString("ru-RU", {
@@ -48,12 +52,24 @@ const chevron = (
 
 const selectCls = "w-full h-9 appearance-none rounded-xl border border-gray-200 bg-white shadow-sm pl-3.5 pr-8 text-sm text-gray-700 focus:outline-none focus:border-blue-400 cursor-pointer";
 
+const spinnerRow = (
+  <div className="flex items-center justify-center gap-2 py-6 text-gray-400">
+    <svg className="animate-spin shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.2"/>
+      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+    </svg>
+    <span className="text-sm">Загрузка…</span>
+  </div>
+);
+
+const emptyState = <p className="py-8 text-center text-gray-400">Ничего не найдено</p>;
+
 export default function TranscriptsPage() {
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
+  const [items, setItems] = useState<Transcript[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [loadedCount, setLoadedCount] = useState(0);
   const [generating, setGenerating] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingInitial, setLoadingInitial] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [managers, setManagers] = useState<string[]>([]);
 
@@ -63,46 +79,54 @@ export default function TranscriptsPage() {
   const [hasArticle, setHasArticle] = useState("all");
   const [manager, setManager]     = useState("all");
 
-  const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const pageRef = useRef(1);
+  const filtersRef = useRef<TranscriptFilters>({});
 
-  const load = useCallback((filters: TranscriptFilters) => {
-    setLoading(true);
-    setError(null);
-    api.transcripts
-      .list(filters)
-      .then((data) => {
-        setTranscripts(data.rows);
-        setTotal(data.total);
-      })
-      .catch((e: unknown) => setError(`Не удалось загрузить звонки: ${String(e)}`))
-      .finally(() => setLoading(false));
-  }, []);
+  const buildFilters = useCallback(
+    (): TranscriptFilters => ({
+      search: search || undefined,
+      result: resultF !== "all" ? resultF : undefined,
+      has_article: hasArticle !== "all" ? (hasArticle as "yes" | "no") : undefined,
+      manager: manager !== "all" ? manager : undefined,
+    }),
+    [search, resultF, hasArticle, manager]
+  );
 
   useEffect(() => {
     api.transcripts.managers().then(setManagers).catch(() => {});
   }, []);
 
+  // Reload from the first page whenever filters change
   useEffect(() => {
+    let cancelled = false;
     reload();
+    return () => { cancelled = true; };
 
     function reload() {
-      load({
-        page,
-        limit: LIMIT,
-        search: search || undefined,
-        result: resultF !== "all" ? resultF : undefined,
-        has_article: hasArticle !== "all" ? (hasArticle as "yes" | "no") : undefined,
-        manager: manager !== "all" ? manager : undefined,
-      });
+      setLoadingInitial(true);
+      setError(null);
+      const filters = buildFilters();
+      filtersRef.current = filters;
+      pageRef.current = 1;
+      api.transcripts
+        .list({ ...filters, page: 1, limit: LIMIT })
+        .then((data) => {
+          if (cancelled) return;
+          setItems(data.rows);
+          setTotal(data.total);
+          setLoadedCount(data.rows.length);
+        })
+        .catch((e: unknown) => !cancelled && setError(`Не удалось загрузить звонки: ${String(e)}`))
+        .finally(() => !cancelled && setLoadingInitial(false));
     }
-  }, [page, search, resultF, hasArticle, manager, load]);
+  }, [buildFilters]);
 
   useEffect(() => {
     const socket = getSocket();
 
     const onCreated = (article: Article) => {
       setGenerating((prev) => (prev === article.transcript_id ? null : prev));
-      setTranscripts((prev) =>
+      setItems((prev) =>
         prev.map((t) =>
           t.id === article.transcript_id ? { ...t, has_article: true } : t
         )
@@ -124,20 +148,24 @@ export default function TranscriptsPage() {
 
   function applySearch() {
     setSearch(searchInput);
-    setPage(1);
   }
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (searchInput !== search) applySearch();
+      setSearch((prev) => (searchInput !== prev ? searchInput : prev));
     }, 500);
     return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
 
-  function changeFilter<T>(setter: (v: T) => void) {
-    return (v: T) => { setter(v); setPage(1); };
-  }
+  const handleLoadMore: BidirectionalListProps<Transcript>["onLoadMore"] = useCallback(async (direction) => {
+    if (direction !== "down") return [];
+    const nextPage = pageRef.current + 1;
+    const data = await api.transcripts.list({ ...filtersRef.current, page: nextPage, limit: LIMIT });
+    pageRef.current = nextPage;
+    setTotal(data.total);
+    setLoadedCount((c) => c + data.rows.length);
+    return data.rows;
+  }, []);
 
   async function handleGenerate(t: Transcript) {
     setGenerating(t.id);
@@ -151,8 +179,6 @@ export default function TranscriptsPage() {
     }
   }
 
-  const from = total === 0 ? 0 : (page - 1) * LIMIT + 1;
-  const to   = Math.min(page * LIMIT, total);
   const hasActiveFilters = search || resultF !== "all" || hasArticle !== "all" || manager !== "all";
 
   return (
@@ -160,8 +186,8 @@ export default function TranscriptsPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl sm:text-2xl font-bold">Звонки</h1>
-        {total > 0 && !loading && (
-          <span className="text-sm text-gray-400">{from}–{to} из {total}</span>
+        {total > 0 && !loadingInitial && (
+          <span className="text-sm text-gray-400">Загружено {loadedCount} из {total}</span>
         )}
       </div>
 
@@ -180,7 +206,7 @@ export default function TranscriptsPage() {
             className="pl-2 pr-3 h-full text-sm text-gray-800 placeholder-gray-400 focus:outline-none flex-1 bg-transparent"
           />
           {searchInput && (
-            <button onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }} className="mr-2 text-gray-300 hover:text-gray-500 transition-colors">
+            <button onClick={() => { setSearchInput(""); setSearch(""); }} className="mr-2 text-gray-300 hover:text-gray-500 transition-colors">
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M1 1l10 10M11 1L1 11"/></svg>
             </button>
           )}
@@ -190,7 +216,7 @@ export default function TranscriptsPage() {
         <div className="flex flex-wrap gap-2">
           {managers.length > 0 && (
             <SelectWrapper>
-              <select value={manager} onChange={(e) => changeFilter(setManager)(e.target.value)} className={selectCls}>
+              <select value={manager} onChange={(e) => setManager(e.target.value)} className={selectCls}>
                 <option value="all">Все менеджеры</option>
                 {managers.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
@@ -199,7 +225,7 @@ export default function TranscriptsPage() {
           )}
 
           <SelectWrapper>
-            <select value={resultF} onChange={(e) => changeFilter(setResultF)(e.target.value)} className={selectCls}>
+            <select value={resultF} onChange={(e) => setResultF(e.target.value)} className={selectCls}>
               <option value="all">Любой итог</option>
               <option value="green">Положительный</option>
               <option value="yellow">Нейтральный</option>
@@ -209,7 +235,7 @@ export default function TranscriptsPage() {
           </SelectWrapper>
 
           <SelectWrapper>
-            <select value={hasArticle} onChange={(e) => changeFilter(setHasArticle)(e.target.value)} className={selectCls}>
+            <select value={hasArticle} onChange={(e) => setHasArticle(e.target.value)} className={selectCls}>
               <option value="all">Все статьи</option>
               <option value="yes">Есть статья</option>
               <option value="no">Без статьи</option>
@@ -219,7 +245,7 @@ export default function TranscriptsPage() {
 
           {hasActiveFilters && (
             <button
-              onClick={() => { setSearch(""); setSearchInput(""); setResultF("all"); setHasArticle("all"); setManager("all"); setPage(1); }}
+              onClick={() => { setSearch(""); setSearchInput(""); setResultF("all"); setHasArticle("all"); setManager("all"); }}
               className="h-9 flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white shadow-sm px-3 text-sm text-gray-400 hover:text-red-500 hover:border-red-200 transition-colors whitespace-nowrap"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -235,170 +261,144 @@ export default function TranscriptsPage() {
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>
       )}
 
-      {/* Mobile cards */}
-      <div className="sm:hidden flex flex-col gap-2">
-        {loading && <p className="py-8 text-center text-gray-400">Загрузка…</p>}
-        {!loading && transcripts.length === 0 && !error && (
-          <p className="py-8 text-center text-gray-400">Ничего не найдено</p>
-        )}
-        {transcripts.map((t) => (
-          <div key={t.id} className="rounded-xl border border-gray-200 bg-white shadow-sm p-3.5">
-            {/* Top: date + result */}
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400">{formatDate(t.call_date)}</span>
-              <div className="flex items-center gap-1.5">
-                <ResultDot type={t.result_type} />
-                <span className="text-xs text-gray-400">{RESULT_LABELS[t.result_type] ?? "—"}</span>
+      {loadingInitial ? (
+        <p className="py-8 text-center text-gray-400">Загрузка…</p>
+      ) : (
+        <BidirectionalList<Transcript>
+          items={items}
+          itemKey={(t) => t.id}
+          onLoadMore={handleLoadMore}
+          onItemsChange={setItems}
+          hasPrevious={false}
+          hasNext={loadedCount < total}
+          viewCount={VIEW_COUNT}
+          useWindow={true}
+          itemClassName="contents"
+          spinnerRow={spinnerRow}
+          emptyState={emptyState}
+          renderItem={(t) => (
+            <>
+              {/* Mobile card */}
+              <div className="sm:hidden rounded-xl border border-gray-200 bg-white shadow-sm p-3.5 mb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-400">{formatDate(t.call_date)}</span>
+                  <div className="flex items-center gap-1.5">
+                    <ResultDot type={t.result_type} />
+                    <span className="text-xs text-gray-400">{RESULT_LABELS[t.result_type] ?? "—"}</span>
+                  </div>
+                </div>
+
+                <div className="font-medium text-gray-800 text-sm leading-snug line-clamp-2 mb-1">{t.subject}</div>
+                <div className="text-xs text-gray-400 mb-2.5">{t.phone}</div>
+
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-500 bg-gray-50 rounded-md px-2 py-0.5 border border-gray-100">
+                    {t.manager_name || "—"}
+                  </span>
+                  {t.transcript_len > 0 && (
+                    <span className="text-xs text-gray-400">
+                      {Math.round(t.transcript_len / 100) / 10} кб
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {t.transcript_len > 0 && (
+                    <Link
+                      href={`/transcripts/${t.id}`}
+                      className="flex-1 text-center rounded-lg border border-gray-200 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                    >
+                      Читать
+                    </Link>
+                  )}
+                  {t.lead_url && (
+                    <a
+                      href={t.lead_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 text-center rounded-lg border border-gray-200 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                    >
+                      Лид
+                    </a>
+                  )}
+                  {t.has_article ? (
+                    <Link
+                      href={t.article_id ? `/articles/${t.article_id}` : "/articles"}
+                      className="flex-1 text-center rounded-lg border border-blue-100 bg-blue-50 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
+                    >
+                      Открыть →
+                    </Link>
+                  ) : t.transcript_len > 100 ? (
+                    <button
+                      onClick={() => handleGenerate(t)}
+                      disabled={generating === t.id}
+                      className="flex-1 rounded-lg bg-blue-600 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait transition-colors"
+                    >
+                      {generating === t.id ? "Генерация…" : "Создать статью"}
+                    </button>
+                  ) : null}
+                </div>
               </div>
-            </div>
 
-            {/* Subject */}
-            <div className="font-medium text-gray-800 text-sm leading-snug line-clamp-2 mb-1">{t.subject}</div>
-            <div className="text-xs text-gray-400 mb-2.5">{t.phone}</div>
+              {/* Desktop row */}
+              <div className="hidden sm:flex sm:items-center sm:gap-4 rounded-xl border border-gray-200 bg-white shadow-sm px-4 py-3 mb-2 hover:border-blue-200 transition-colors">
+                <div className="w-24 shrink-0 text-xs text-gray-400 whitespace-nowrap">{formatDate(t.call_date)}</div>
 
-            {/* Manager + size */}
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-gray-500 bg-gray-50 rounded-md px-2 py-0.5 border border-gray-100">
-                {t.manager_name || "—"}
-              </span>
-              {t.transcript_len > 0 && (
-                <span className="text-xs text-gray-400">
-                  {Math.round(t.transcript_len / 100) / 10} кб
-                </span>
-              )}
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-2">
-              {t.transcript_len > 0 && (
-                <Link
-                  href={`/transcripts/${t.id}`}
-                  className="flex-1 text-center rounded-lg border border-gray-200 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
-                >
-                  Читать
-                </Link>
-              )}
-              {t.has_article ? (
-                <Link
-                  href={t.article_id ? `/articles/${t.article_id}` : "/articles"}
-                  className="flex-1 text-center rounded-lg border border-blue-100 bg-blue-50 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
-                >
-                  Открыть →
-                </Link>
-              ) : t.transcript_len > 100 ? (
-                <button
-                  onClick={() => handleGenerate(t)}
-                  disabled={generating === t.id}
-                  className="flex-1 rounded-lg bg-blue-600 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait transition-colors"
-                >
-                  {generating === t.id ? "Генерация…" : "Создать статью"}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Desktop table */}
-      <div className="hidden sm:block overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
-            <tr>
-              <th className="px-4 py-3 text-left">Дата</th>
-              <th className="px-4 py-3 text-left">Тема / Телефон</th>
-              <th className="px-4 py-3 text-left">Менеджер</th>
-              <th className="px-4 py-3 text-center">Итог</th>
-              <th className="px-4 py-3 text-right">Транскрипт</th>
-              <th className="px-4 py-3 text-center">Расшифровка</th>
-              <th className="px-4 py-3 text-center">Статья</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {transcripts.map((t) => (
-              <tr key={t.id} className="hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(t.call_date)}</td>
-                <td className="px-4 py-3">
+                <div className="flex-1 min-w-0">
                   <div className="font-medium text-gray-800 line-clamp-1">{t.subject}</div>
                   <div className="text-xs text-gray-400">{t.phone}</div>
-                </td>
-                <td className="px-4 py-3 text-gray-600">{t.manager_name}</td>
-                <td className="px-4 py-3 text-center">
+                </div>
+
+                <div className="w-36 shrink-0 text-sm text-gray-600 truncate">{t.manager_name || "—"}</div>
+
+                <div className="w-20 shrink-0 flex items-center justify-center">
                   <ResultDot type={t.result_type} />
-                </td>
-                <td className="px-4 py-3 text-right text-gray-400">
+                </div>
+
+                <div className="w-16 shrink-0 text-right text-xs text-gray-400">
                   {t.transcript_len ? `${Math.round(t.transcript_len / 100) / 10} кб` : "—"}
-                </td>
-                <td className="px-4 py-3 text-center">
+                </div>
+
+                <div className="shrink-0 flex items-center gap-1.5">
                   {t.transcript_len > 0 ? (
                     <Link href={`/transcripts/${t.id}`} className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors">
                       Читать
                     </Link>
                   ) : (
-                    <span className="text-xs text-gray-300">—</span>
+                    <span className="w-[68px] text-center text-xs text-gray-300">—</span>
                   )}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  {t.has_article ? (
-                    <Link href={t.article_id ? `/articles/${t.article_id}` : "/articles"} className="text-xs text-blue-600 hover:underline">Открыть →</Link>
-                  ) : t.transcript_len > 100 ? (
-                    <button
-                      onClick={() => handleGenerate(t)}
-                      disabled={generating === t.id}
-                      className="rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait"
+
+                  {t.lead_url && (
+                    <a
+                      href={t.lead_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
                     >
-                      {generating === t.id ? "Генерация…" : "Создать статью"}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-300">Мало данных</span>
+                      Лид
+                    </a>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
 
-        {loading && <p className="p-8 text-center text-gray-400">Загрузка…</p>}
-        {!loading && transcripts.length === 0 && !error && (
-          <p className="p-8 text-center text-gray-400">Ничего не найдено</p>
-        )}
-      </div>
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-4 gap-2">
-          <span className="text-sm text-gray-400 shrink-0">
-            <span className="hidden sm:inline">Страница </span>{page} / {totalPages}
-          </span>
-          <div className="flex items-center gap-1 flex-wrap justify-end">
-            <button onClick={() => setPage(1)} disabled={page === 1}
-              className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors" title="Первая">«</button>
-            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-              className="rounded-lg border border-gray-200 bg-white px-2.5 sm:px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">‹</button>
-
-            {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
-              .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
-                acc.push(p);
-                return acc;
-              }, [])
-              .map((p, i) =>
-                p === "…" ? (
-                  <span key={`e${i}`} className="px-1 text-gray-400 text-sm">…</span>
-                ) : (
-                  <button key={p} onClick={() => setPage(p as number)}
-                    className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                      page === p ? "border-blue-600 bg-blue-600 text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-                    }`}>{p}</button>
-                )
-              )}
-
-            <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-              className="rounded-lg border border-gray-200 bg-white px-2.5 sm:px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">›</button>
-            <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
-              className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors" title="Последняя">»</button>
-          </div>
-        </div>
+                  <div className="w-32 flex justify-center">
+                    {t.has_article ? (
+                      <Link href={t.article_id ? `/articles/${t.article_id}` : "/articles"} className="text-xs text-blue-600 hover:underline">Открыть →</Link>
+                    ) : t.transcript_len > 100 ? (
+                      <button
+                        onClick={() => handleGenerate(t)}
+                        disabled={generating === t.id}
+                        className="rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait"
+                      >
+                        {generating === t.id ? "Генерация…" : "Создать статью"}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-300 whitespace-nowrap">Мало данных</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        />
       )}
     </div>
   );

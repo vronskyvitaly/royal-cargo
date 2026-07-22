@@ -57,7 +57,7 @@ router.get("/", async (req, res) => {
   const dataParams = [...params, limitNum, offset];
   const { rows } = await pool.query(`
     SELECT
-      ct.id, ct.lead_id, ct.subject, ct.call_date, ct.manager_name,
+      ct.id, ct.lead_id, ct.lead_url, ct.subject, ct.call_date, ct.manager_name,
       ct.result_type, ct.phone,
       length(ct.transcript_raw) AS transcript_len,
       EXISTS (SELECT 1 FROM articles a WHERE a.transcript_id = ct.id) AS has_article,

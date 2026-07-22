@@ -114,7 +114,7 @@ export default function ArticlesPage() {
             key={a.id}
             data-article-id={a.id}
             className={`rounded-xl border bg-white shadow-sm p-3.5 transition-colors duration-1000 ${
-              highlightId === a.id ? "border-indigo-300 bg-indigo-50" : "border-gray-200"
+              highlightId === a.id ? "border-indigo-600 bg-indigo-300" : "border-gray-200"
             }`}
           >
             {/* Title */}
@@ -200,12 +200,12 @@ export default function ArticlesPage() {
       {/* Desktop table */}
       <div className="hidden sm:block overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
+          <thead className="bg-gray-50 text-gray-500 uppercase text-xs tracking-wide">
             <tr>
               <th className="px-4 py-3 text-left">Заголовок</th>
               <th className="px-4 py-3 text-left">Источник</th>
               <th className="px-4 py-3 text-center">Статус</th>
-              <th className="px-4 py-3 text-left">Платформа</th>
+              <th className="px-4 py-3 text-center">Платформа</th>
               <th className="px-4 py-3 text-right">Обновлено</th>
               <th className="px-4 py-3" />
             </tr>
@@ -216,7 +216,7 @@ export default function ArticlesPage() {
                 key={a.id}
                 data-article-id={a.id}
                 className={`transition-colors duration-1000 ${
-                  highlightId === a.id ? "bg-indigo-50" : "hover:bg-gray-50"
+                  highlightId === a.id ? "bg-indigo-300" : "hover:bg-gray-50"
                 }`}
               >
                 <td className="px-4 py-3 max-w-xs">
@@ -244,7 +244,7 @@ export default function ArticlesPage() {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3 text-gray-500 capitalize">
+                <td className="px-4 py-3 text-center text-gray-500 capitalize">
                   {a.platform ?? "—"}
                   {a.published_url && (
                     <a href={a.published_url} target="_blank" rel="noopener noreferrer"
