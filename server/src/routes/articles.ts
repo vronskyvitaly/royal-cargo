@@ -16,41 +16,161 @@ export function createArticlesRouter(io: Server) {
   const router = Router();
 
   // List all articles
-  router.get("/", async (_req, res) => {
+  router.get("/", async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         a.id, a.title, a.status, a.platform, a.published_url,
         a.review_comment, a.reviewed_by, a.last_edited_by, a.created_at, a.updated_at,
         ct.subject AS transcript_subject, ct.call_date, ct.manager_name,
+        ct.lead_id, ct.lead_url,
         a.transcript_id,
         ARRAY(
           SELECT DISTINCT ah.user_name
           FROM article_history ah
           WHERE ah.article_id = a.id AND ah.action LIKE 'Одобрил%'
           ORDER BY ah.user_name
-        ) AS all_reviewers
+        ) AS all_reviewers,
+        (SELECT COUNT(*) FROM article_likes al WHERE al.article_id = a.id)::int AS like_count,
+        EXISTS(SELECT 1 FROM article_likes al2 WHERE al2.article_id = a.id AND al2.user_id = $1) AS liked_by_me,
+        ARRAY(
+          SELECT u.name FROM article_likes al3
+          JOIN users u ON u.id = al3.user_id
+          WHERE al3.article_id = a.id
+          ORDER BY al3.created_at ASC
+        ) AS liked_by,
+        (SELECT COUNT(*) FROM article_discussion ad WHERE ad.article_id = a.id)::int AS comment_count
       FROM articles a
       LEFT JOIN call_transcripts ct ON ct.id = a.transcript_id
       ORDER BY a.updated_at DESC
-    `);
+    `, [req.user!.userId]);
     res.json(rows);
   });
 
   // Get single article
   router.get("/:id", async (req, res) => {
     const { rows } = await pool.query(
-      `SELECT a.*, ct.subject AS transcript_subject, ct.call_date, ct.transcript_raw
+      `SELECT a.*, ct.subject AS transcript_subject, ct.call_date, ct.transcript_raw,
+              ct.lead_id, ct.lead_url,
+              (SELECT COUNT(*) FROM article_likes al WHERE al.article_id = a.id)::int AS like_count,
+              EXISTS(SELECT 1 FROM article_likes al2 WHERE al2.article_id = a.id AND al2.user_id = $2) AS liked_by_me,
+              ARRAY(
+                SELECT u.name FROM article_likes al3
+                JOIN users u ON u.id = al3.user_id
+                WHERE al3.article_id = a.id
+                ORDER BY al3.created_at ASC
+              ) AS liked_by
        FROM articles a
        LEFT JOIN call_transcripts ct ON ct.id = a.transcript_id
        WHERE a.id = $1`,
-      [req.params.id]
+      [req.params.id, req.user!.userId]
     );
     if (!rows[0]) return res.status(404).json({ error: "Not found" });
     const { rows: history } = await pool.query(
       "SELECT id, user_name, action, created_at FROM article_history WHERE article_id = $1 ORDER BY created_at ASC",
       [req.params.id]
     );
-    return res.json({ ...rows[0], history });
+    const { rows: discussion } = await pool.query(
+      "SELECT id, article_id, user_name, comment_text, created_at FROM article_discussion WHERE article_id = $1 ORDER BY created_at ASC",
+      [req.params.id]
+    );
+    return res.json({ ...rows[0], history, discussion });
+  });
+
+  // Toggle like (one per user)
+  router.post("/:id/like", async (req, res) => {
+    const articleId = Number(req.params.id);
+    const userId = req.user!.userId;
+    const { rows: existing } = await pool.query(
+      "SELECT id FROM article_likes WHERE article_id = $1 AND user_id = $2",
+      [articleId, userId]
+    );
+    let liked: boolean;
+    if (existing[0]) {
+      await pool.query("DELETE FROM article_likes WHERE id = $1", [existing[0].id]);
+      liked = false;
+    } else {
+      await pool.query(
+        "INSERT INTO article_likes (article_id, user_id) VALUES ($1, $2)",
+        [articleId, userId]
+      );
+      liked = true;
+    }
+    const { rows: countRows } = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM article_likes WHERE article_id = $1",
+      [articleId]
+    );
+    const { rows: likedByRows } = await pool.query(
+      `SELECT u.name FROM article_likes al
+       JOIN users u ON u.id = al.user_id
+       WHERE al.article_id = $1
+       ORDER BY al.created_at ASC`,
+      [articleId]
+    );
+    const likeCount = countRows[0].count as number;
+    const likedBy = likedByRows.map((r) => r.name as string);
+    io.emit("article:like_toggled", { article_id: articleId, like_count: likeCount, liked_by: likedBy });
+    res.json({ liked, like_count: likeCount, liked_by: likedBy });
+  });
+
+  // List discussion comments (general, not tied to selected text)
+  router.get("/:id/discussion", async (req, res) => {
+    const { rows } = await pool.query(
+      "SELECT id, article_id, user_name, comment_text, created_at FROM article_discussion WHERE article_id = $1 ORDER BY created_at ASC",
+      [req.params.id]
+    );
+    res.json(rows);
+  });
+
+  // Add discussion comment
+  router.post("/:id/discussion", async (req, res) => {
+    const { commentText } = req.body as { commentText: string };
+    if (!commentText?.trim()) {
+      res.status(400).json({ error: "Текст комментария обязателен" });
+      return;
+    }
+    const { rows } = await pool.query(
+      "INSERT INTO article_discussion (article_id, user_name, comment_text) VALUES ($1, $2, $3) RETURNING *",
+      [req.params.id, req.user!.name, commentText.trim()]
+    );
+    io.emit("article:discussion_added", rows[0]);
+    res.json(rows[0]);
+  });
+
+  // Edit discussion comment (author only)
+  router.patch("/:id/discussion/:commentId", async (req, res) => {
+    const { commentText } = req.body as { commentText: string };
+    if (!commentText?.trim()) {
+      res.status(400).json({ error: "Текст комментария обязателен" });
+      return;
+    }
+    const { rows: existing } = await pool.query(
+      "SELECT user_name FROM article_discussion WHERE id = $1 AND article_id = $2",
+      [req.params.commentId, req.params.id]
+    );
+    if (!existing[0]) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (existing[0].user_name !== req.user!.name) {
+      res.status(403).json({ error: "Редактировать можно только свои комментарии" });
+      return;
+    }
+    const { rows } = await pool.query(
+      "UPDATE article_discussion SET comment_text = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+      [commentText.trim(), req.params.commentId]
+    );
+    io.emit("article:discussion_updated", rows[0]);
+    res.json(rows[0]);
+  });
+
+  // Delete discussion comment
+  router.delete("/:id/discussion/:commentId", async (req, res) => {
+    await pool.query(
+      "DELETE FROM article_discussion WHERE id = $1 AND article_id = $2",
+      [req.params.commentId, req.params.id]
+    );
+    io.emit("article:discussion_deleted", { id: Number(req.params.commentId), article_id: Number(req.params.id) });
+    res.json({ ok: true });
   });
 
   // Generate article from transcript

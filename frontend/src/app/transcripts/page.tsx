@@ -36,6 +36,18 @@ function ResultDot({ type }: { type: string }) {
   );
 }
 
+function SelectWrapper({ children }: { children: React.ReactNode }) {
+  return <div className="relative flex-1 min-w-[130px]">{children}</div>;
+}
+
+const chevron = (
+  <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 4l4 4 4-4"/>
+  </svg>
+);
+
+const selectCls = "w-full h-9 appearance-none rounded-xl border border-gray-200 bg-white shadow-sm pl-3.5 pr-8 text-sm text-gray-700 focus:outline-none focus:border-blue-400 cursor-pointer";
+
 export default function TranscriptsPage() {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [total, setTotal] = useState(0);
@@ -71,14 +83,18 @@ export default function TranscriptsPage() {
   }, []);
 
   useEffect(() => {
-    load({
-      page,
-      limit: LIMIT,
-      search: search || undefined,
-      result: resultF !== "all" ? resultF : undefined,
-      has_article: hasArticle !== "all" ? (hasArticle as "yes" | "no") : undefined,
-      manager: manager !== "all" ? manager : undefined,
-    });
+    reload();
+
+    function reload() {
+      load({
+        page,
+        limit: LIMIT,
+        search: search || undefined,
+        result: resultF !== "all" ? resultF : undefined,
+        has_article: hasArticle !== "all" ? (hasArticle as "yes" | "no") : undefined,
+        manager: manager !== "all" ? manager : undefined,
+      });
+    }
   }, [page, search, resultF, hasArticle, manager, load]);
 
   useEffect(() => {
@@ -138,18 +154,6 @@ export default function TranscriptsPage() {
   const from = total === 0 ? 0 : (page - 1) * LIMIT + 1;
   const to   = Math.min(page * LIMIT, total);
   const hasActiveFilters = search || resultF !== "all" || hasArticle !== "all" || manager !== "all";
-
-  const SelectWrapper = ({ children }: { children: React.ReactNode }) => (
-    <div className="relative flex-1 min-w-[130px]">{children}</div>
-  );
-
-  const chevron = (
-    <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 4l4 4 4-4"/>
-    </svg>
-  );
-
-  const selectCls = "w-full h-9 appearance-none rounded-xl border border-gray-200 bg-white shadow-sm pl-3.5 pr-8 text-sm text-gray-700 focus:outline-none focus:border-blue-400 cursor-pointer";
 
   return (
     <div>

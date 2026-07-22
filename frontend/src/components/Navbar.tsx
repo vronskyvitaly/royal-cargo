@@ -1,7 +1,9 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { initials } from "@/lib/format";
 
 const links = [
   { href: "/transcripts", label: "Звонки" },
@@ -14,15 +16,19 @@ export default function Navbar() {
   const path = usePathname();
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   function handleSignOut() {
+    setMenuOpen(false);
     signOut();
     router.replace("/login");
   }
 
+  const visibleLinks = links.filter((l) => !l.adminOnly || user?.role === "admin");
+
   return (
     <nav
-      className="sticky top-0 z-50 shrink-0 bg-[#111116] h-14 px-3 sm:px-5 flex items-center justify-between shadow-[0_1px_0_rgba(255,255,255,0.08),0_4px_24px_rgba(0,0,0,0.5)]"
+      className="relative sticky top-0 z-50 shrink-0 bg-[#111116] h-14 px-3 sm:px-5 flex items-center justify-between shadow-[0_1px_0_rgba(255,255,255,0.08),0_4px_24px_rgba(0,0,0,0.5)]"
       style={{ borderBottom: "1px solid rgba(99,102,241,0.25)" }}
     >
       {/* Logo + Nav */}
@@ -39,10 +45,10 @@ export default function Navbar() {
           </span>
         </Link>
 
-        <div className="hidden sm:block w-px h-4 bg-white/10" />
+        <div className="hidden md:block w-px h-4 bg-white/10" />
 
-        <div className="flex items-center gap-0.5">
-          {links.filter((l) => !l.adminOnly || user?.role === "admin").map(({ href, label }) => {
+        <div className="hidden md:flex items-center gap-0.5">
+          {visibleLinks.map(({ href, label }) => {
             const active = path.startsWith(href);
             return (
               <Link
@@ -63,35 +69,96 @@ export default function Navbar() {
 
       {/* Right */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        <div className="hidden sm:flex items-center gap-1.5">
+        <div className="hidden md:flex items-center gap-1.5">
           <span className="relative flex h-1.5 w-1.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
           </span>
           <span className="text-xs text-gray-500 font-medium">онлайн</span>
         </div>
-        <div className="hidden sm:block w-px h-4 bg-white/10" />
+        <div className="hidden md:block w-px h-4 bg-white/10" />
         {user && (
           <>
-            <Link href="/profile" className="flex items-center gap-1.5 group">
+            <Link href="/profile" className="hidden md:flex items-center gap-1.5 group">
               <div className="w-7 h-7 rounded-full bg-indigo-500/20 group-hover:bg-indigo-500/30 flex items-center justify-center transition-colors">
                 <span className="text-[11px] font-semibold text-indigo-300">
-                  {user.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+                  {initials(user.name)}
                 </span>
               </div>
-              <span className="hidden sm:block text-xs text-gray-400 group-hover:text-gray-200 font-medium transition-colors">
+              <span className="hidden md:block text-xs text-gray-400 group-hover:text-gray-200 font-medium transition-colors">
                 {user.name.split(" ")[0]}
               </span>
             </Link>
             <button
               onClick={handleSignOut}
-              className="text-[11px] text-gray-600 hover:text-gray-300 font-medium tracking-wide transition-colors"
+              className="hidden md:block text-[11px] text-gray-600 hover:text-gray-300 font-medium tracking-wide transition-colors"
             >
               Выйти
             </button>
           </>
         )}
+
+        {/* Burger — mobile + tablet */}
+        <button
+          onClick={() => setMenuOpen((v) => !v)}
+          className="md:hidden flex items-center justify-center w-8 h-8 rounded-md text-gray-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+          aria-label={menuOpen ? "Закрыть меню" : "Открыть меню"}
+          aria-expanded={menuOpen}
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+            {menuOpen ? (
+              <path d="M4 4l10 10M14 4L4 14" />
+            ) : (
+              <path d="M2 5h14M2 9h14M2 13h14" />
+            )}
+          </svg>
+        </button>
       </div>
+
+      {/* Mobile dropdown menu */}
+      {menuOpen && (
+        <div className="md:hidden absolute top-14 left-0 right-0 bg-[#111116] border-b border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.5)] px-3 py-3">
+          <div className="flex flex-col gap-0.5">
+            {visibleLinks.map(({ href, label }) => {
+              const active = path.startsWith(href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setMenuOpen(false)}
+                  className={`px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
+                    active
+                      ? "text-indigo-300 bg-indigo-500/15"
+                      : "text-gray-300 hover:text-white hover:bg-white/[0.06]"
+                  }`}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
+
+          {user && (
+            <>
+              <div className="my-3 h-px bg-white/10" />
+              <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-white/[0.06] transition-colors">
+                <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
+                  <span className="text-xs font-semibold text-indigo-300">
+                    {initials(user.name)}
+                  </span>
+                </div>
+                <span className="text-sm text-gray-300 font-medium">{user.name}</span>
+              </Link>
+              <button
+                onClick={handleSignOut}
+                className="w-full text-left px-3 py-2.5 mt-0.5 text-sm text-gray-400 hover:text-white hover:bg-white/[0.06] rounded-md font-medium transition-colors"
+              >
+                Выйти
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </nav>
   );
 }

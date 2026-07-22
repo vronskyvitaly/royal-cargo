@@ -16,12 +16,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { setLoading(false); return; }
-    fetchMe(token)
-      .then(setUser)
-      .catch(() => clearToken())
-      .finally(() => setLoading(false));
+    loadUser();
+
+    function loadUser() {
+      const token = getToken();
+      if (!token) { setLoading(false); return; }
+      fetchMe(token)
+        .then(setUser)
+        .catch(() => clearToken())
+        .finally(() => setLoading(false));
+    }
   }, []);
 
   const signIn = useCallback((token: string, u: User) => {

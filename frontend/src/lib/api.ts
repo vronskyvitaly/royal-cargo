@@ -72,7 +72,23 @@ export interface Article {
   transcript_subject?: string;
   call_date?: string;
   manager_name?: string;
+  lead_id?: number | null;
+  lead_url?: string | null;
+  like_count?: number;
+  liked_by_me?: boolean;
+  liked_by?: string[];
+  comment_count?: number;
   history?: { id: number; user_name: string; action: string; created_at: string }[];
+  discussion?: ArticleDiscussionComment[];
+}
+
+export interface ArticleDiscussionComment {
+  id: number;
+  article_id: number;
+  user_name: string;
+  comment_text: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ArticleComment {
@@ -208,6 +224,27 @@ export const api = {
         patch(`/api/articles/${id}/comments/${commentId}`, { resolved }),
       remove: (id: number, commentId: number): Promise<void> =>
         del(`/api/articles/${id}/comments/${commentId}`).then(() => undefined),
+    },
+    like: (id: number): Promise<{ liked: boolean; like_count: number; liked_by: string[] }> =>
+      post(`/api/articles/${id}/like`, {}).then((r) => r.json()),
+    discussion: {
+      list: (id: number): Promise<ArticleDiscussionComment[]> => get(`/api/articles/${id}/discussion`),
+      add: (id: number, commentText: string): Promise<ArticleDiscussionComment> =>
+        post(`/api/articles/${id}/discussion`, { commentText }).then((r) => r.json()),
+      update: (id: number, commentId: number, commentText: string): Promise<ArticleDiscussionComment> =>
+        fetch(`${BASE}/api/articles/${id}/discussion/${commentId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ commentText }),
+        }).then(async (r) => {
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({ error: r.statusText }));
+            throw new Error(err.error ?? r.statusText);
+          }
+          return r.json();
+        }),
+      remove: (id: number, commentId: number): Promise<void> =>
+        del(`/api/articles/${id}/discussion/${commentId}`).then(() => undefined),
     },
   },
   boards: {

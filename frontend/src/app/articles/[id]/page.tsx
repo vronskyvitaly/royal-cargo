@@ -2,10 +2,11 @@
 import { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, type Article, type ArticleComment, type ArticleBoardCard, type Board, type BoardColumn } from "@/lib/api";
+import { api, type Article, type ArticleComment, type ArticleBoardCard, type ArticleDiscussionComment, type Board, type BoardColumn } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/context/AuthContext";
 import { getSocket } from "@/lib/socket";
+import { initials } from "@/lib/format";
 
 export default function ArticleEditorPage({
   params,
@@ -40,6 +41,13 @@ export default function ArticleEditorPage({
   const [addingComment, setAddingComment] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Discussion (general comments) + likes
+  const [discussion, setDiscussion] = useState<ArticleDiscussionComment[]>([]);
+  const [discussionInput, setDiscussionInput] = useState("");
+  const [likeBusy, setLikeBusy] = useState(false);
+  const [editingDiscussionId, setEditingDiscussionId] = useState<number | null>(null);
+  const [editingDiscussionText, setEditingDiscussionText] = useState("");
 
   // Add to kanban
   const [showKanbanModal, setShowKanbanModal] = useState(false);
@@ -111,7 +119,6 @@ export default function ArticleEditorPage({
       previewRef.current.innerHTML = content;
       applyHighlights(previewRef.current, comments);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, previewEditing, comments]);
 
   function enterPreviewEdit() {
@@ -141,6 +148,7 @@ export default function ArticleEditorPage({
       setContent(a.content);
       setSavedTitle(a.title);
       setSavedContent(a.content);
+      setDiscussion(a.discussion ?? []);
     });
     api.articles.comments.list(nid).then(setComments);
     api.boards.cardByArticle(nid).then(setKanbanCard);
@@ -180,15 +188,43 @@ export default function ArticleEditorPage({
       );
     };
 
+    const onLikeToggled = ({ article_id, like_count, liked_by }: { article_id: number; like_count: number; liked_by: string[] }) => {
+      if (article_id !== numId) return;
+      setArticle((prev) => (prev ? { ...prev, like_count, liked_by } : prev));
+    };
+
+    const onDiscussionAdded = (comment: ArticleDiscussionComment) => {
+      if (comment.article_id !== numId) return;
+      setDiscussion((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
+    };
+
+    const onDiscussionDeleted = ({ id: commentId, article_id }: { id: number; article_id: number }) => {
+      if (article_id !== numId) return;
+      setDiscussion((prev) => prev.filter((c) => c.id !== commentId));
+    };
+
+    const onDiscussionUpdated = (comment: ArticleDiscussionComment) => {
+      if (comment.article_id !== numId) return;
+      setDiscussion((prev) => prev.map((c) => (c.id === comment.id ? comment : c)));
+    };
+
     socket.on("article:comment_added", onCommentAdded);
     socket.on("article:comment_resolved", onCommentResolved);
     socket.on("article:comment_deleted", onCommentDeleted);
     socket.on("article:history_added", onHistoryAdded);
+    socket.on("article:like_toggled", onLikeToggled);
+    socket.on("article:discussion_added", onDiscussionAdded);
+    socket.on("article:discussion_deleted", onDiscussionDeleted);
+    socket.on("article:discussion_updated", onDiscussionUpdated);
     return () => {
       socket.off("article:comment_added", onCommentAdded);
       socket.off("article:comment_resolved", onCommentResolved);
       socket.off("article:comment_deleted", onCommentDeleted);
       socket.off("article:history_added", onHistoryAdded);
+      socket.off("article:like_toggled", onLikeToggled);
+      socket.off("article:discussion_added", onDiscussionAdded);
+      socket.off("article:discussion_deleted", onDiscussionDeleted);
+      socket.off("article:discussion_updated", onDiscussionUpdated);
     };
   }, [id]);
 
@@ -227,6 +263,48 @@ export default function ArticleEditorPage({
   async function deleteComment(commentId: number) {
     await api.articles.comments.remove(Number(id), commentId);
     setComments((prev) => prev.filter((c) => c.id !== commentId));
+  }
+
+  async function toggleLike() {
+    if (likeBusy) return;
+    setLikeBusy(true);
+    try {
+      const { liked, like_count, liked_by } = await api.articles.like(Number(id));
+      setArticle((prev) => (prev ? { ...prev, liked_by_me: liked, like_count, liked_by } : prev));
+    } finally {
+      setLikeBusy(false);
+    }
+  }
+
+  async function submitDiscussion() {
+    if (!discussionInput.trim()) return;
+    const text = discussionInput.trim();
+    setDiscussionInput("");
+    const c = await api.articles.discussion.add(Number(id), text);
+    setDiscussion((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
+  }
+
+  async function deleteDiscussionComment(commentId: number) {
+    await api.articles.discussion.remove(Number(id), commentId);
+    setDiscussion((prev) => prev.filter((c) => c.id !== commentId));
+  }
+
+  function startEditDiscussion(c: ArticleDiscussionComment) {
+    setEditingDiscussionId(c.id);
+    setEditingDiscussionText(c.comment_text);
+  }
+
+  function cancelEditDiscussion() {
+    setEditingDiscussionId(null);
+    setEditingDiscussionText("");
+  }
+
+  async function saveEditDiscussion(commentId: number) {
+    if (!editingDiscussionText.trim()) return;
+    const updated = await api.articles.discussion.update(Number(id), commentId, editingDiscussionText.trim());
+    setDiscussion((prev) => prev.map((c) => (c.id === commentId ? updated : c)));
+    setEditingDiscussionId(null);
+    setEditingDiscussionText("");
   }
 
   function scrollToMark(commentId: number) {
@@ -355,6 +433,7 @@ export default function ArticleEditorPage({
 
   function handleBack() {
     if (isDirty && !confirm("Есть несохранённые изменения. Уйти без сохранения?")) return;
+    sessionStorage.setItem("articles:highlight", id);
     router.push("/articles");
   }
 
@@ -404,23 +483,56 @@ export default function ArticleEditorPage({
   return (
     <div className="max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <button onClick={handleBack} className="text-gray-400 hover:text-gray-600 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-3 mb-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={handleBack} className="shrink-0 whitespace-nowrap text-gray-400 hover:text-gray-600 text-sm">
             ← Назад
           </button>
           <StatusBadge status={article.status} />
           {article.platform && (
-            <span className="text-xs text-gray-500 capitalize bg-gray-100 rounded-full px-2 py-0.5">
+            <span className="shrink-0 text-xs text-gray-500 capitalize bg-gray-100 rounded-full px-2 py-0.5">
               {article.platform}
             </span>
           )}
+          <div className="relative group">
+            <button
+              onClick={toggleLike}
+              disabled={likeBusy}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-60 ${
+                article.liked_by_me
+                  ? "border-pink-200 bg-pink-50 text-pink-600 hover:bg-pink-100"
+                  : "border-gray-200 text-gray-500 hover:border-pink-300 hover:text-pink-600"
+              }`}
+              title={article.liked_by_me ? "Убрать лайк" : "Поставить лайк"}
+            >
+              <svg width="13" height="13" viewBox="0 0 20 20" fill={article.liked_by_me ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8">
+                <path d="M10 17.5s-6.5-4.06-8.5-8.06C.36 6.6 1.7 3.5 4.7 3.1c1.7-.23 3.3.6 4.3 2.1 1-1.5 2.6-2.33 4.3-2.1 3 .4 4.34 3.5 3.2 6.34C16.5 13.44 10 17.5 10 17.5z" />
+              </svg>
+              {article.like_count ?? 0}
+            </button>
+
+            {(article.liked_by?.length ?? 0) > 0 && (
+              <div className="invisible opacity-0 group-hover:visible group-hover:opacity-100 transition-opacity absolute left-0 top-full mt-2 z-10 min-w-[170px] rounded-xl border border-gray-200 bg-white shadow-lg p-2">
+                <p className="px-2 pb-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Понравилось</p>
+                <div className="flex flex-col gap-1">
+                  {article.liked_by!.map((name, i) => (
+                    <div key={`${name}-${i}`} className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-gray-50">
+                      <div className="w-6 h-6 shrink-0 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center text-[10px] font-semibold">
+                        {initials(name)}
+                      </div>
+                      <span className="text-xs text-gray-700 truncate">{name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {kanbanCard ? (
             <Link
               href={`/kanban/${kanbanCard.board_id}`}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-full px-3 py-1.5 transition-colors"
+              className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-full px-3 py-1.5 transition-colors"
               title="Открыть карточку на доске"
             >
               В канбане: {kanbanCard.board_name} → {kanbanCard.column_name}
@@ -428,14 +540,14 @@ export default function ArticleEditorPage({
           ) : (
             <button
               onClick={openKanbanModal}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-full px-3 py-1.5 transition-colors"
+              className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-full px-3 py-1.5 transition-colors"
             >
               + В канбан
             </button>
           )}
           <button
             onClick={handleDelete}
-            className="text-xs text-red-400 hover:text-red-600"
+            className="shrink-0 whitespace-nowrap text-xs text-red-400 hover:text-red-600"
           >
             Удалить
           </button>
@@ -444,13 +556,35 @@ export default function ArticleEditorPage({
 
       {/* Source info */}
       {article.transcript_subject && (
-        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 p-3 text-sm text-blue-700">
-          Источник: <strong>{article.transcript_subject}</strong>
-          {article.call_date && (
-            <span className="ml-2 text-blue-400">
-              {new Date(article.call_date).toLocaleDateString("ru-RU", { timeZone: "Europe/Moscow" })}
-            </span>
-          )}
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 p-3 text-sm text-blue-700">
+          <span>
+            Источник: <strong>{article.transcript_subject}</strong>
+            {article.call_date && (
+              <span className="ml-2 text-blue-400">
+                {new Date(article.call_date).toLocaleDateString("ru-RU", { timeZone: "Europe/Moscow" })}
+              </span>
+            )}
+          </span>
+          <span className="ml-auto flex items-center gap-2">
+            {article.transcript_id && (
+              <Link
+                href={`/transcripts/${article.transcript_id}`}
+                className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+              >
+                Читать звонок →
+              </Link>
+            )}
+            {article.lead_url && (
+              <a
+                href={article.lead_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+              >
+                Открыть лид{article.lead_id ? ` #${article.lead_id}` : ""} →
+              </a>
+            )}
+          </span>
         </div>
       )}
 
@@ -796,6 +930,134 @@ export default function ArticleEditorPage({
         )}
       </div>
 
+      {/* Discussion — general comments on the whole article */}
+      <div className="mt-4 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-3 sm:px-5 py-2.5 sm:py-3 border-b border-gray-100 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Обсуждение</span>
+          {discussion.length > 0 && (
+            <span className="text-xs text-gray-300">{pluralizeComments(discussion.length)}</span>
+          )}
+        </div>
+
+        {discussion.length === 0 ? (
+          <div className="px-3 sm:px-5 py-6 sm:py-8 flex flex-col items-center gap-2 text-center">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" className="text-gray-300 sm:w-7 sm:h-7">
+              <path d="M17 10c0 3.31-3.13 6-7 6-1.02 0-1.98-.19-2.85-.53L3 17l1.18-3.54A5.6 5.6 0 013 10c0-3.31 3.13-6 7-6s7 2.69 7 6z" />
+            </svg>
+            <p className="text-sm font-medium text-gray-500">Обсудите статью с коллегами</p>
+            <p className="text-xs text-gray-400">Здесь можно поделиться мнением или задать вопрос</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-gray-50">
+            {discussion.map((c) => {
+              const isEditing = editingDiscussionId === c.id;
+              const isAuthor = c.user_name === user?.name;
+              const isEdited = new Date(c.updated_at).getTime() - new Date(c.created_at).getTime() > 1000;
+              return (
+                <li key={c.id} className="group flex items-start gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-4">
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[11px] sm:text-xs font-semibold">
+                    {initials(c.user_name)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-sm font-medium text-gray-800">{c.user_name}</span>
+                      <span className="text-[11px] sm:text-xs text-gray-400 shrink-0">
+                        {new Date(c.created_at).toLocaleString("ru-RU", {
+                          day: "2-digit", month: "2-digit",
+                          hour: "2-digit", minute: "2-digit",
+                          timeZone: "Europe/Moscow",
+                        })}
+                        {isEdited && <span className="italic"> · изменено</span>}
+                      </span>
+                    </div>
+
+                    {isEditing ? (
+                      <div className="mt-1 flex flex-col gap-1.5">
+                        <textarea
+                          autoFocus
+                          value={editingDiscussionText}
+                          onChange={(e) => setEditingDiscussionText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveEditDiscussion(c.id);
+                            if (e.key === "Escape") cancelEditDiscussion();
+                          }}
+                          rows={2}
+                          className="w-full rounded-lg border border-indigo-300 px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => saveEditDiscussion(c.id)}
+                            disabled={!editingDiscussionText.trim()}
+                            className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                          >
+                            Сохранить
+                          </button>
+                          <button onClick={cancelEditDiscussion} className="text-xs text-gray-400 hover:text-gray-600">
+                            Отмена
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-1 rounded-xl rounded-tl-sm bg-gray-50 px-3 py-2 sm:px-3.5 sm:py-2.5 text-sm text-gray-700 whitespace-pre-wrap break-words">
+                        {c.comment_text}
+                      </div>
+                    )}
+                  </div>
+
+                  {!isEditing && (
+                    <div className="shrink-0 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {isAuthor && (
+                        <button
+                          onClick={() => startEditDiscussion(c)}
+                          className="text-xs text-gray-300 hover:text-indigo-500"
+                          title="Редактировать"
+                        >
+                          ✎
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteDiscussionComment(c.id)}
+                        className="text-xs text-gray-300 hover:text-red-400"
+                        title="Удалить комментарий"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div className="px-3 sm:px-5 py-3 border-t border-gray-100">
+          <div className="flex items-start gap-2">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[11px] sm:text-xs font-semibold">
+              {user ? initials(user.name) : ""}
+            </div>
+            <textarea
+              value={discussionInput}
+              onChange={(e) => setDiscussionInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitDiscussion();
+              }}
+              placeholder="Написать комментарий к статье…"
+              rows={2}
+              className="flex-1 min-w-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none resize-none"
+            />
+          </div>
+          <div className="flex justify-end mt-2">
+            <button
+              onClick={submitDiscussion}
+              disabled={!discussionInput.trim()}
+              className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Отправить
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Unpublish — admin only */}
       {article.status === "published" && user?.role === "admin" && (
         <div className="mt-4">
@@ -1064,4 +1326,13 @@ export default function ArticleEditorPage({
       )}
     </div>
   );
+}
+
+function pluralizeComments(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  let word = "комментариев";
+  if (mod10 === 1 && mod100 !== 11) word = "комментарий";
+  else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) word = "комментария";
+  return `${n} ${word}`;
 }

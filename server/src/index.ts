@@ -56,6 +56,28 @@ pool.query(
   "CREATE UNIQUE INDEX IF NOT EXISTS board_cards_article_id_idx ON board_cards(article_id) WHERE article_id IS NOT NULL"
 ).catch((e: unknown) => console.error("Migration error:", e));
 
+// DB migration: article discussion comments + likes
+pool.query(`
+  CREATE TABLE IF NOT EXISTS article_discussion (
+    id SERIAL PRIMARY KEY,
+    article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    user_name TEXT NOT NULL,
+    comment_text TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS article_likes (
+    id SERIAL PRIMARY KEY,
+    article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(article_id, user_id)
+  );
+`).catch((e: unknown) => console.error("Migration error:", e));
+
+pool.query(
+  "ALTER TABLE article_discussion ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+).catch((e: unknown) => console.error("Migration error:", e));
+
 const app = express();
 const httpServer = createServer(app);
 

@@ -6,7 +6,7 @@
 
 | Слой | Технологии |
 |---|---|
-| Фронтенд | Next.js 16 (App Router), TypeScript, Tailwind CSS 4, dnd-kit |
+| Фронтенд | Next.js 16 (App Router), TypeScript, Tailwind CSS 4, dnd-kit, @floating-ui/react |
 | Бэкенд | Express 5, Socket.IO, TypeScript, tsx |
 | База данных | PostgreSQL (без миграционного фреймворка — `CREATE/ALTER ... IF NOT EXISTS` при старте сервера) |
 | AI | Claude (Anthropic API) |
@@ -32,6 +32,19 @@ Claude генерирует SEO-статью по транскрипту (аси
 ```
 
 Все действия по статье (создание черновика, одобрение, отклонение, возврат на доработку, правки, публикация, снятие с публикации, добавление в канбан, перемещение по канбану) пишутся в историю изменений статьи и синхронизируются между открытыми вкладками в реальном времени через Socket.IO.
+
+## Вовлечённость: лайки и обсуждение
+
+Помимо инлайн-комментариев к выделенному тексту, у каждой статьи есть:
+
+- **Лайки** — один лайк на пользователя (toggle), список лайкнувших показывается во всплывающем попапе (аватар-инициалы + имя) на странице статьи и в списке статей
+- **Обсуждение** — общий тред комментариев под статьёй, не привязанный к конкретному фрагменту текста. Автор может отредактировать свой комментарий (с пометкой «изменено»); удалить может любой пользователь
+- В списке статей, если статью одобрили больше двух человек, вместо растягивающегося списка имён показывается компактная метка со счётчиком и попапом при наведении/клике
+- На странице статьи и в списке есть быстрые ссылки на исходный звонок (расшифровку) и на карточку лида в Bitrix24, если она известна
+
+Всплывающие попапы (лайки, обсуждение, список одобривших) рендерятся через React-портал (`@floating-ui/react`), чтобы не обрезаться контейнерами со скроллом, и на мобильных экранах часть из них скрыта как чисто десктопная функция просмотра.
+
+При переходе «← Назад» со страницы статьи в список нужная статья автоматически прокручивается в область видимости и на несколько секунд подсвечивается.
 
 ## Роли
 
@@ -187,10 +200,15 @@ cd frontend && npm run build && npm start
 | `POST` | `/api/articles/:id/publish` | Опубликовать на платформе |
 | `POST` | `/api/articles/:id/unpublish` | Снять с публикации |
 | `DELETE` | `/api/articles/:id` | Удалить статью |
-| `GET` | `/api/articles/:id/comments` | Комментарии к статье |
+| `GET` | `/api/articles/:id/comments` | Комментарии к выделенному тексту |
 | `POST` | `/api/articles/:id/comments` | Добавить комментарий к выделению |
 | `PATCH` | `/api/articles/:id/comments/:commentId` | Пометить комментарий решённым |
 | `DELETE` | `/api/articles/:id/comments/:commentId` | Удалить комментарий |
+| `POST` | `/api/articles/:id/like` | Поставить/убрать лайк (toggle, один на пользователя) |
+| `GET` | `/api/articles/:id/discussion` | Общие комментарии-обсуждение под статьёй |
+| `POST` | `/api/articles/:id/discussion` | Добавить комментарий в обсуждение |
+| `PATCH` | `/api/articles/:id/discussion/:commentId` | Отредактировать свой комментарий (только автор) |
+| `DELETE` | `/api/articles/:id/discussion/:commentId` | Удалить комментарий из обсуждения |
 
 ### Канбан
 
@@ -235,8 +253,10 @@ cd frontend && npm run build && npm start
 | `article:published` | `Article` | После публикации |
 | `article:deleted` | `{ id }` | После удаления |
 | `article:generate_error` | `{ transcriptId, error }` | Ошибка фоновой генерации |
-| `article:comment_added` / `_resolved` / `_deleted` | `ArticleComment` / `{ id, article_id }` | Изменения комментариев |
+| `article:comment_added` / `_resolved` / `_deleted` | `ArticleComment` / `{ id, article_id }` | Изменения инлайн-комментариев |
 | `article:history_added` | запись истории | Новое событие в истории статьи (в т.ч. из канбана) |
+| `article:like_toggled` | `{ article_id, like_count, liked_by }` | Лайк/анлайк статьи |
+| `article:discussion_added` / `_updated` / `_deleted` | `ArticleDiscussionComment` / `{ id, article_id }` | Изменения в обсуждении статьи |
 | `board:created` / `_updated` / `_deleted` | `Board` / `{ id }` | Изменения доски |
 | `column:created` / `_updated` / `_deleted` | `BoardColumn` / `{ id, board_id }` | Изменения колонки |
 | `columns:reordered` | `{ board_id, order }` | Изменён порядок колонок |
